@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 import aiosqlite
 
@@ -6,6 +7,11 @@ from app.auth import require_admin, get_current_user
 from app.database import get_db
 from app.models.user import User, UserCreate, UserUpdate, PasswordChange
 from app.repositories import user_repo, zone_assignment_repo, audit_repo
+
+
+class ZoneAssignment(BaseModel):
+    zone_name: str
+    pdns_server_id: int
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -40,7 +46,7 @@ async def get_user(user_id: int, user: User = Depends(require_admin), db: aiosql
     target = await user_repo.get_user_by_id(db, user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    zones = await zone_assignment_repo.get_user_zones(db, user_id)
+    zones = await zone_assignment_repo.get_user_zone_assignments(db, user_id)
     return {**target.model_dump(), "zones": zones}
 
 
@@ -87,7 +93,7 @@ async def delete_user(
 @router.put("/{user_id}/zones")
 async def set_user_zones(
     user_id: int,
-    zone_names: list[str],
+    assignments: list[ZoneAssignment],
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
@@ -95,10 +101,11 @@ async def set_user_zones(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    await zone_assignment_repo.set_user_zones(db, user_id, zone_names)
+    dicts = [a.model_dump() for a in assignments]
+    await zone_assignment_repo.set_user_zones(db, user_id, dicts)
     await audit_repo.log_action(
         db, user.id, user.username, "user.zones_update",
-        detail={"target_user": target.username, "zones": zone_names},
+        detail={"target_user": target.username, "zones": dicts},
     )
     return {"ok": True}
 
@@ -109,7 +116,7 @@ async def get_user_zones(
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    return await zone_assignment_repo.get_user_zones(db, user_id)
+    return await zone_assignment_repo.get_user_zone_assignments(db, user_id)
 
 
 @router.put("/me/password")

@@ -46,24 +46,39 @@ async def user_detail(
     if not target:
         return RedirectResponse(url="/users", status_code=302)
 
-    assigned_zones = await zone_assignment_repo.get_user_zones(db, user_id)
+    raw_assignments = await zone_assignment_repo.get_user_zone_assignments(db, user_id)
 
     active_servers = [s for s in await pdns_server_repo.list_servers(db) if s["is_active"]]
-    all_zones = []
+    server_name_map = {s["id"]: s["name"] for s in active_servers}
+
+    assigned_zones = [
+        {
+            "zone_name": a["zone_name"],
+            "pdns_server_id": a["pdns_server_id"],
+            "server_name": server_name_map.get(a["pdns_server_id"], "Unknown") if a["pdns_server_id"] else "Any",
+        }
+        for a in raw_assignments
+    ]
+
+    servers_with_zones = []
     for srv in active_servers:
         try:
             zones = await registry.get(srv["id"]).list_zones()
-            all_zones.extend(zones)
+            zone_names = sorted(z.get("name") or z.get("id", "") for z in zones)
+            servers_with_zones.append({
+                "id": srv["id"],
+                "name": srv["name"],
+                "zones": zone_names,
+            })
         except (PDNSError, RuntimeError):
             pass
-    all_zones = sorted(all_zones, key=lambda z: z["name"])
 
     return templates.TemplateResponse(request, "users/detail.html", context={
         "user": user,
         "active_page": "users",
         "target_user": target,
         "assigned_zones": assigned_zones,
-        "all_zones": all_zones,
+        "servers_with_zones": servers_with_zones,
     })
 
 

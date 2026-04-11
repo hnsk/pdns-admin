@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 import aiosqlite
 
@@ -208,6 +208,7 @@ async def update_zone(
 @router.delete("/{zone_id}")
 async def delete_zone(
     zone_id: str,
+    server_id: int | None = Query(default=None),
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
     pdns_client: PDNSClient = Depends(get_pdns_for_zone),
@@ -217,9 +218,20 @@ async def delete_zone(
     except PDNSError as e:
         _handle_pdns_error(e)
 
-    await zone_assignment_repo.delete_zone_assignments(db, zone_id)
-    await pdns_server_repo.unmap_zone(db, zone_id)
-    await audit_repo.log_action(db, user.id, user.username, "zone.delete", zone_name=zone_id)
+    if server_id is not None:
+        await pdns_server_repo.unmap_zone_from_server(db, zone_id, server_id)
+        remaining = await pdns_server_repo.count_zone_servers(db, zone_id)
+        if remaining == 0:
+            await zone_assignment_repo.delete_zone_assignments(db, zone_id)
+    else:
+        await zone_assignment_repo.delete_zone_assignments(db, zone_id)
+        await pdns_server_repo.unmap_zone(db, zone_id)
+
+    await audit_repo.log_action(
+        db, user.id, user.username, "zone.delete",
+        zone_name=zone_id,
+        detail={"server_id": server_id},
+    )
     return {"ok": True}
 
 

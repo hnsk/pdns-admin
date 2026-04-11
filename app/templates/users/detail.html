@@ -59,6 +59,15 @@
         </div>
         <div class="card-body" x-data="zoneAssignments()">
             <div class="form-group">
+                <label>Server</label>
+                <select x-model="selectedServer" @change="query=''; selectedZone=''; dropdownOpen=false">
+                    <option value="">Select server...</option>
+                    <template x-for="srv in servers" :key="srv.id">
+                        <option :value="srv.id" x-text="srv.name"></option>
+                    </template>
+                </select>
+            </div>
+            <div class="form-group">
                 <label>Assign Zone</label>
                 <div class="flex gap-2">
                     <div style="flex:1; position:relative;" @click.outside="dropdownOpen=false">
@@ -66,6 +75,7 @@
                             @focus="dropdownOpen=true"
                             @input="dropdownOpen=true; selectedZone=''"
                             placeholder="Search zone..."
+                            :disabled="!selectedServer"
                             style="width:100%">
                         <div x-show="dropdownOpen && filteredZones.length > 0"
                             style="position:absolute; z-index:50; width:100%; max-height:200px; overflow-y:auto;
@@ -86,15 +96,16 @@
             </div>
 
             <div style="margin-top: 0.5rem;">
-                {% for zn in assigned_zones %}
-                <div class="flex items-center justify-between" style="padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
-                    <span class="mono text-sm">{{ zn }}</span>
-                    <button class="btn btn-danger btn-sm" @click="removeZone('{{ zn }}')">Remove</button>
-                </div>
-                {% endfor %}
-                {% if not assigned_zones %}
-                <div class="text-dim text-sm">No zones assigned</div>
-                {% endif %}
+                <template x-for="(a, idx) in assignments" :key="a.zone_name + '::' + a.pdns_server_id">
+                    <div class="flex items-center justify-between" style="padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                        <div>
+                            <span class="mono text-sm" x-text="a.zone_name"></span>
+                            <span class="text-dim text-sm" style="margin-left: 0.5rem;" x-text="'@ ' + a.server_name"></span>
+                        </div>
+                        <button class="btn btn-danger btn-sm" @click="removeZone(idx)">Remove</button>
+                    </div>
+                </template>
+                <div x-show="assignments.length === 0" class="text-dim text-sm">No zones assigned</div>
             </div>
         </div>
     </div>
@@ -119,40 +130,49 @@
 <script>
 function zoneAssignments() {
     return {
+        selectedServer: '',
         selectedZone: '',
         query: '',
         dropdownOpen: false,
-        allZones: {{ all_zones | map(attribute='name') | list | tojson }},
+        servers: {{ servers_with_zones | tojson }},
+        assignments: {{ assigned_zones | tojson }},
+        get serverZones() {
+            if (!this.selectedServer) return [];
+            const srv = this.servers.find(s => s.id == this.selectedServer);
+            return srv ? srv.zones : [];
+        },
         get filteredZones() {
             const q = this.query.toLowerCase();
-            return this.allZones.filter(z => z.toLowerCase().includes(q));
+            return this.serverZones.filter(z => z.toLowerCase().includes(q));
         },
         async addZone() {
-            if (!this.selectedZone) return;
-            const zones = [...document.querySelectorAll('[data-zone]')].map(el => el.dataset.zone);
-            zones.push(this.selectedZone);
-            await this.saveZones(zones);
+            if (!this.selectedZone || !this.selectedServer) return;
+            const srv = this.servers.find(s => s.id == this.selectedServer);
+            const already = this.assignments.some(
+                a => a.zone_name === this.selectedZone && a.pdns_server_id == this.selectedServer
+            );
+            if (already) return;
+            const next = [...this.assignments, {
+                zone_name: this.selectedZone,
+                pdns_server_id: parseInt(this.selectedServer),
+                server_name: srv ? srv.name : '',
+            }];
+            await this.save(next);
         },
-        async removeZone(name) {
-            const zones = [...document.querySelectorAll('[data-zone]')].map(el => el.dataset.zone).filter(z => z !== name);
-            await this.saveZones(zones);
+        async removeZone(idx) {
+            const next = this.assignments.filter((_, i) => i !== idx);
+            await this.save(next);
         },
-        async saveZones(zones) {
-            // Get current zones from the page
-            const currentZones = [];
-            document.querySelectorAll('.mono.text-sm').forEach(el => {
-                if (el.closest('[style*="border-bottom"]')) currentZones.push(el.textContent.trim());
-            });
-
-            const allZones = this.selectedZone ? [...currentZones, this.selectedZone] : zones;
+        async save(next) {
+            const payload = next.map(a => ({ zone_name: a.zone_name, pdns_server_id: a.pdns_server_id }));
             const r = await fetch('/api/users/{{ target_user.id }}/zones', {
                 method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(allZones)
+                body: JSON.stringify(payload),
             });
             if (r.ok) location.reload();
             else { const d = await r.json(); alert(d.detail); }
-        }
+        },
     };
 }
 </script>

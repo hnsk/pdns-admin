@@ -71,7 +71,7 @@ async def map_zone_to_server(
 ) -> None:
     await db.execute(
         "INSERT INTO zone_server_map (zone_name, pdns_server_id) VALUES (?, ?) "
-        "ON CONFLICT(zone_name) DO UPDATE SET pdns_server_id=excluded.pdns_server_id",
+        "ON CONFLICT(zone_name, pdns_server_id) DO NOTHING",
         (zone_name, pdns_server_id),
     )
     await db.commit()
@@ -80,6 +80,36 @@ async def map_zone_to_server(
 async def unmap_zone(db: aiosqlite.Connection, zone_name: str) -> None:
     await db.execute("DELETE FROM zone_server_map WHERE zone_name = ?", (zone_name,))
     await db.commit()
+
+
+async def unmap_zone_from_server(
+    db: aiosqlite.Connection, zone_name: str, pdns_server_id: int
+) -> None:
+    await db.execute(
+        "DELETE FROM zone_server_map WHERE zone_name = ? AND pdns_server_id = ?",
+        (zone_name, pdns_server_id),
+    )
+    await db.commit()
+
+
+async def count_zone_servers(db: aiosqlite.Connection, zone_name: str) -> int:
+    rows = await db.execute_fetchall(
+        "SELECT COUNT(*) FROM zone_server_map WHERE zone_name = ?",
+        (zone_name,),
+    )
+    return rows[0][0] if rows else 0
+
+
+async def get_server_for_zone_by_server_id(
+    db: aiosqlite.Connection, zone_name: str, pdns_server_db_id: int
+) -> dict | None:
+    rows = await db.execute_fetchall(
+        "SELECT s.id, s.name, s.api_url, s.api_key, s.server_id, s.is_active, s.created_at, s.updated_at "
+        "FROM pdns_servers s JOIN zone_server_map m ON s.id = m.pdns_server_id "
+        "WHERE m.zone_name = ? AND s.id = ?",
+        (zone_name, pdns_server_db_id),
+    )
+    return _row_to_dict(rows[0]) if rows else None
 
 
 async def get_server_for_zone_or_fallback(

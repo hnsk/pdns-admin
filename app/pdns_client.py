@@ -50,7 +50,9 @@ class PDNSClient:
     # --- Server info ---
 
     async def get_server_info(self) -> dict:
-        resp = await self._request("GET", "")
+        # base_url ends with trailing slash; PowerDNS server endpoint has no trailing slash
+        server_url = str(self.client.base_url).rstrip("/")
+        resp = await self._request("GET", server_url)
         return resp.json()
 
     async def get_statistics(self) -> list[dict]:

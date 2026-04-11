@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -31,39 +31,42 @@ RECORD_TYPES = [
 @router.get("/zones", response_class=HTMLResponse)
 async def zones_list(request: Request, user: User = Depends(get_current_user), db: aiosqlite.Connection = Depends(get_db)):
     active_servers = [s for s in await pdns_server_repo.list_servers(db) if s["is_active"]]
-    srv_by_id = {s["id"]: s for s in active_servers}
 
-    # Fetch all zone->server mappings in one query
+    # Fetch all (zone, server) mappings in one query
     mapping_rows = await db.execute_fetchall("SELECT zone_name, pdns_server_id FROM zone_server_map")
-    zone_server_mapping = {row[0]: row[1] for row in mapping_rows}
+    mapped_pairs = {(row[0], row[1]) for row in mapping_rows}
 
-    # Collect zones from all servers, dedup by zone name (first occurrence wins)
-    seen: dict[str, dict] = {}
+    # Collect all (zone, server) pairs — one row per pair, no dedup
+    all_zones = []
     for srv in active_servers:
         try:
             zones = await registry.get(srv["id"]).list_zones()
             for z in zones:
                 name = z.get("name") or z.get("id")
-                if name not in seen:
-                    z["_server_id"] = srv["id"]
-                    z["_server_name"] = srv["name"]
-                    seen[name] = z
+                z["_server_id"] = srv["id"]
+                z["_server_name"] = srv["name"]
+                if (name, srv["id"]) not in mapped_pairs:
+                    await pdns_server_repo.map_zone_to_server(db, name, srv["id"])
+                    mapped_pairs.add((name, srv["id"]))
+                all_zones.append(z)
         except (PDNSError, RuntimeError):
             pass
 
-    all_zones = list(seen.values())
-
-    # Correct server attribution using zone_server_map
-    for z in all_zones:
-        name = z.get("name") or z.get("id")
-        mapped_srv_id = zone_server_mapping.get(name)
-        if mapped_srv_id and mapped_srv_id in srv_by_id:
-            z["_server_id"] = mapped_srv_id
-            z["_server_name"] = srv_by_id[mapped_srv_id]["name"]
-
     if user.role != "admin":
-        allowed = set(await zone_assignment_repo.get_user_zones(db, user.id))
-        all_zones = [z for z in all_zones if z.get("id") in allowed or z.get("name") in allowed]
+        assignments = await zone_assignment_repo.get_user_zone_assignments(db, user.id)
+        # Assignments with a specific server: filter by (name, server_id) pair.
+        # Assignments with NULL server (legacy): allow by zone name on any server.
+        allowed_pairs = {(a["zone_name"], a["pdns_server_id"]) for a in assignments if a["pdns_server_id"] is not None}
+        allowed_names = {a["zone_name"] for a in assignments if a["pdns_server_id"] is None}
+        all_zones = [
+            z for z in all_zones
+            if (z.get("name"), z.get("_server_id")) in allowed_pairs
+            or (z.get("id"), z.get("_server_id")) in allowed_pairs
+            or z.get("name") in allowed_names
+            or z.get("id") in allowed_names
+        ]
+
+    allowed_server_ids = {z["_server_id"] for z in all_zones} if user.role != "admin" else None
 
     async def _add_rrset_count(zone: dict) -> dict:
         try:
@@ -82,6 +85,7 @@ async def zones_list(request: Request, user: User = Depends(get_current_user), d
     pdns_servers = [
         {k: v for k, v in s.items() if k != "api_key"}
         for s in active_servers
+        if allowed_server_ids is None or s["id"] in allowed_server_ids
     ]
     return templates.TemplateResponse(request, "zones/list.html", context={
         "user": user,
@@ -96,6 +100,7 @@ async def zones_list(request: Request, user: User = Depends(get_current_user), d
 async def zone_detail(
     zone_id: str,
     request: Request,
+    server_id: int | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
@@ -103,7 +108,12 @@ async def zone_detail(
         if not await zone_assignment_repo.user_has_zone_access(db, user.id, zone_id):
             return RedirectResponse(url="/zones", status_code=302)
 
-    srv = await pdns_server_repo.get_server_for_zone_or_fallback(db, zone_id)
+    if server_id is not None:
+        srv = await pdns_server_repo.get_server_for_zone_by_server_id(db, zone_id, server_id)
+    else:
+        srv = await pdns_server_repo.get_server_for_zone_or_fallback(db, zone_id)
+        if srv is not None:
+            return RedirectResponse(url=f"/zones/{zone_id}?server_id={srv['id']}", status_code=302)
     if srv is None:
         return RedirectResponse(url="/zones", status_code=302)
 
@@ -118,6 +128,8 @@ async def zone_detail(
         "active_page": "zones",
         "zone": zone,
         "record_types": RECORD_TYPES,
+        "server_id": server_id,
+        "server_name": srv["name"],
     })
 
 
@@ -125,6 +137,7 @@ async def zone_detail(
 async def zone_export_page(
     zone_id: str,
     request: Request,
+    server_id: int | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
@@ -132,7 +145,10 @@ async def zone_export_page(
         if not await zone_assignment_repo.user_has_zone_access(db, user.id, zone_id):
             return RedirectResponse(url="/zones", status_code=302)
 
-    srv = await pdns_server_repo.get_server_for_zone_or_fallback(db, zone_id)
+    if server_id is not None:
+        srv = await pdns_server_repo.get_server_for_zone_by_server_id(db, zone_id, server_id)
+    else:
+        srv = await pdns_server_repo.get_server_for_zone_or_fallback(db, zone_id)
     export_data = "Failed to export zone"
     if srv is not None:
         try:
@@ -146,6 +162,7 @@ async def zone_export_page(
         "active_page": "zones",
         "zone_id": zone_id,
         "export_data": export_data,
+        "server_id": server_id,
     })
 
 
@@ -153,13 +170,17 @@ async def zone_export_page(
 async def zone_dnssec_page(
     zone_id: str,
     request: Request,
+    server_id: int | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     if user.role != "admin":
         return RedirectResponse(url="/zones", status_code=302)
 
-    srv = await pdns_server_repo.get_server_for_zone_or_fallback(db, zone_id)
+    if server_id is not None:
+        srv = await pdns_server_repo.get_server_for_zone_by_server_id(db, zone_id, server_id)
+    else:
+        srv = await pdns_server_repo.get_server_for_zone_or_fallback(db, zone_id)
     if srv is None:
         return RedirectResponse(url="/zones", status_code=302)
 
@@ -183,4 +204,5 @@ async def zone_dnssec_page(
         "zone_id": zone_id,
         "dnssec_enabled": dnssec_enabled,
         "keys": keys,
+        "server_id": server_id,
     })

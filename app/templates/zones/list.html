@@ -17,9 +17,16 @@
     </div>
 </div>
 
-<div class="card" x-data="zonesTable()">
+<div class="card" x-data='zonesTable({{ pdns_servers | tojson }})'>
+    <!-- Server selector tabs -->
+    <div style="padding: .75rem 1rem .25rem; border-bottom: 1px solid var(--border); display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;">
+        <button class="btn btn-sm" :class="selectedServerId === null ? 'btn-primary' : ''" @click="selectedServerId = null">All servers</button>
+        <template x-for="s in servers" :key="s.id">
+            <button class="btn btn-sm" :class="selectedServerId === s.id ? 'btn-primary' : ''" @click="selectedServerId = s.id" x-text="s.name"></button>
+        </template>
+    </div>
     <div class="card-header">
-        <span>{{ zones|length }} zone{{ 's' if zones|length != 1 else '' }}</span>
+        <span x-text="filtered.length + ' zone' + (filtered.length !== 1 ? 's' : '')"></span>
         <input type="text" x-model="search" placeholder="Filter zones..." style="width: 250px;">
     </div>
     <table>
@@ -40,32 +47,32 @@
                 <th class="sortable" :class="{ sorted: sortBy === 'rrset_count' }" @click="sort('rrset_count')">
                     Records<span class="sort-icon" x-text="sortIcon('rrset_count')"></span>
                 </th>
-                <th class="sortable" :class="{ sorted: sortBy === '_server_name' }" @click="sort('_server_name')">
+                <th x-show="selectedServerId === null" class="sortable" :class="{ sorted: sortBy === '_server_name' }" @click="sort('_server_name')">
                     Server<span class="sort-icon" x-text="sortIcon('_server_name')"></span>
                 </th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
-        <template x-for="zone in filtered" :key="zone.id">
+        <template x-for="zone in filtered" :key="zone.id + '::' + zone._server_id">
             <tr>
-                <td><a :href="'/zones/' + zone.id" class="mono" x-text="zone.name"></a></td>
-                <td><span class="badge badge-gray" x-text="zone.kind"></span></td>
+                <td><a :href="'/zones/' + zone.id + '?server_id=' + zone._server_id" class="mono" x-text="zone.name"></a></td>
+                <td><span class="badge" :class="zone.kind === 'Master' ? 'badge-blue' : zone.kind === 'Slave' ? 'badge-yellow' : 'badge-gray'" x-text="zone.kind"></span></td>
                 <td>
                     <span class="badge" :class="zone.dnssec ? 'badge-green' : 'badge-gray'"
                           x-text="zone.dnssec ? 'SIGNED' : 'OFF'"></span>
                 </td>
                 <td class="mono text-sm" x-text="zone.serial"></td>
                 <td class="text-dim" x-text="zone.rrset_count != null ? zone.rrset_count : '-'"></td>
-                <td class="text-sm text-dim" x-text="zone._server_name || '—'"></td>
+                <td x-show="selectedServerId === null" class="text-sm text-dim" x-text="zone._server_name || '—'"></td>
                 <td>
-                    <a :href="'/zones/' + zone.id" class="btn btn-sm">Manage</a>
+                    <a :href="'/zones/' + zone.id + '?server_id=' + zone._server_id" class="btn btn-sm">Manage</a>
                     <button x-show="isAdmin" class="btn btn-danger btn-sm" @click="deleteZone(zone)">Delete</button>
                 </td>
             </tr>
         </template>
         <tr x-show="filtered.length === 0">
-            <td colspan="7" class="empty-state">No zones found</td>
+            <td :colspan="selectedServerId === null ? 7 : 6" class="empty-state">No zones found</td>
         </tr>
         </tbody>
     </table>
@@ -267,7 +274,7 @@ function createZoneModal(templates, servers) {
                 if (this.kind === 'Slave') {
                     await new Promise(r => setTimeout(r, 1000));
                 }
-                window.location.href = '/zones/' + z.id;
+                window.location.href = '/zones/' + z.id + '?server_id=' + this.selectedServerId;
             } else {
                 const d = await resp.json().catch(() => ({}));
                 this.error = d.detail || 'Failed';
@@ -277,15 +284,21 @@ function createZoneModal(templates, servers) {
     };
 }
 
-function zonesTable() {
+function zonesTable(servers) {
+    const defaultServer = servers.length === 1 ? servers[0].id : null;
     return {
         search: '',
         sortBy: 'name',
         sortDir: 'asc',
         isAdmin: {{ 'true' if user.role == 'admin' else 'false' }},
         zones: {{ zones | tojson }},
+        servers,
+        selectedServerId: defaultServer,
         get filtered() {
             let result = this.zones.slice();
+            if (this.selectedServerId !== null) {
+                result = result.filter(z => z._server_id === this.selectedServerId);
+            }
             if (this.search) {
                 const q = this.search.toLowerCase();
                 result = result.filter(z => z.name.toLowerCase().includes(q));
@@ -315,8 +328,8 @@ function zonesTable() {
             return this.sortDir === 'asc' ? '↑' : '↓';
         },
         deleteZone(zone) {
-            if (!confirm('Delete zone ' + zone.name + '? This cannot be undone.')) return;
-            fetch('/api/zones/' + zone.id, { method: 'DELETE' })
+            if (!confirm('Delete zone ' + zone.name + ' from ' + zone._server_name + '?')) return;
+            fetch('/api/zones/' + zone.id + '?server_id=' + zone._server_id, { method: 'DELETE' })
                 .then(r => r.ok ? location.reload() : r.json().then(d => alert(d.detail || 'Delete failed')));
         }
     };

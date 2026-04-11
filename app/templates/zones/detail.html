@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ zone.name }} - PowerAdmin{% endblock %}
+{% set sid_param = '?server_id=' ~ server_id if server_id else '' %}
 {% block content %}
 <div class="page-header">
     <div>
@@ -10,16 +11,17 @@
             <span class="badge badge-green">DNSSEC</span>
             {% endif %}
             <span class="text-dim text-sm">Serial: {{ zone.serial }}</span>
+            <span class="text-dim text-sm">· Server: <strong>{{ server_name }}</strong></span>
         </div>
     </div>
     <div class="btn-group">
-        <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/notify" hx-swap="none"
+        <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/notify{{ sid_param }}" hx-swap="none"
             hx-on::after-request="if(event.detail.successful) alert('Notify sent')">Notify</button>
-        <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/rectify" hx-swap="none"
+        <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/rectify{{ sid_param }}" hx-swap="none"
             hx-on::after-request="if(event.detail.successful) alert('Zone rectified')">Rectify</button>
-        <a href="/zones/{{ zone.id }}/export" class="btn btn-sm">Export</a>
+        <a href="/zones/{{ zone.id }}/export{{ sid_param }}" class="btn btn-sm">Export</a>
         {% if user.role == 'admin' %}
-        <a href="/zones/{{ zone.id }}/dnssec" class="btn btn-sm">DNSSEC Keys</a>
+        <a href="/zones/{{ zone.id }}/dnssec{{ sid_param }}" class="btn btn-sm">DNSSEC Keys</a>
         {% endif %}
     </div>
 </div>
@@ -160,7 +162,7 @@
     <div class="card-body">
         <button class="btn btn-danger" onclick="
             if(confirm('Are you sure you want to delete zone {{ zone.name }}? This cannot be undone.')) {
-                fetch('/api/zones/{{ zone.id }}', {method:'DELETE'}).then(r => {
+                fetch('/api/zones/{{ zone.id }}{{ sid_param }}', {method:'DELETE'}).then(r => {
                     if(r.ok) window.location.href = '/zones';
                     else r.json().then(d => alert(d.detail || 'Delete failed'));
                 });
@@ -171,6 +173,9 @@
 {% endif %}
 
 <script>
+const _serverId = {{ server_id | tojson }};
+const _sidQ = _serverId ? '?server_id=' + _serverId : '';
+
 (function() {
     const _rrsets = {{ zone.rrsets | tojson }};
     const _rows = [];
@@ -206,7 +211,7 @@ function zoneSettings() {
             if (this.kind === 'Slave') {
                 body.masters = this.masters.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
             }
-            const r = await fetch('/api/zones/{{ zone.id }}', {
+            const r = await fetch('/api/zones/{{ zone.id }}' + _sidQ, {
                 method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(body)
@@ -225,7 +230,7 @@ function zoneSettings() {
             if (this.kind === 'Slave') {
                 body.masters = this.masters.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
             }
-            const save = await fetch('/api/zones/{{ zone.id }}', {
+            const save = await fetch('/api/zones/{{ zone.id }}' + _sidQ, {
                 method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(body)
@@ -236,7 +241,7 @@ function zoneSettings() {
                 this.axfrMsg = e.detail || 'Failed to save settings';
                 return;
             }
-            const r = await fetch('/api/zones/{{ zone.id }}/axfr-retrieve', { method: 'PUT' });
+            const r = await fetch('/api/zones/{{ zone.id }}/axfr-retrieve' + _sidQ, { method: 'PUT' });
             this.axfrLoading = false;
             const d = await r.json().catch(() => ({}));
             if (r.ok) {
@@ -318,7 +323,7 @@ function zoneEditor() {
                 records: [{ content: this.newRec.content, disabled: this.newRec.disabled }]
             }];
             try {
-                const r = await fetch('/api/zones/{{ zone.id }}/rrsets', {
+                const r = await fetch('/api/zones/{{ zone.id }}/rrsets' + _sidQ, {
                     method: 'PATCH',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
@@ -337,7 +342,7 @@ function zoneEditor() {
                 changetype: 'REPLACE',
                 records: [{ content: row.editContent, disabled: row.editDisabled }]
             }];
-            const r = await fetch('/api/zones/{{ zone.id }}/rrsets', {
+            const r = await fetch('/api/zones/{{ zone.id }}/rrsets' + _sidQ, {
                 method: 'PATCH',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload)
@@ -354,7 +359,7 @@ function zoneEditor() {
                 changetype: 'DELETE',
                 records: []
             }];
-            const r = await fetch('/api/zones/{{ zone.id }}/rrsets', {
+            const r = await fetch('/api/zones/{{ zone.id }}/rrsets' + _sidQ, {
                 method: 'PATCH',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload)
