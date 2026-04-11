@@ -23,3 +23,8 @@ class UserUpdate(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str

@@ -4,10 +4,11 @@ import aiosqlite
 
 from app.auth import get_current_user, require_admin, require_zone_access
 from app.database import get_db
+from app.dependencies import get_pdns_for_zone
 from app.models.user import User
 from app.models.zone import RRSet, ZoneCreate, ZoneUpdate
-from app.pdns_client import pdns, PDNSError
-from app.repositories import audit_repo, zone_assignment_repo, zone_template_repo
+from app.pdns_client import PDNSClient, PDNSError, registry
+from app.repositories import audit_repo, pdns_server_repo, zone_assignment_repo, zone_template_repo
 
 router = APIRouter(prefix="/api/zones", tags=["zones"])
 
@@ -32,16 +33,26 @@ async def list_zones(
     user: User = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    try:
-        zones = await pdns.list_zones()
-    except PDNSError as e:
-        _handle_pdns_error(e)
+    active_servers = [s for s in await pdns_server_repo.list_servers(db) if s["is_active"]]
+    seen: dict[str, dict] = {}
+    for srv in active_servers:
+        try:
+            zones = await registry.get(srv["id"]).list_zones()
+            for z in zones:
+                name = z.get("name") or z.get("id")
+                if name not in seen:
+                    z["_server_id"] = srv["id"]
+                    z["_server_name"] = srv["name"]
+                    seen[name] = z
+        except (PDNSError, RuntimeError):
+            pass
+    all_zones = list(seen.values())
 
     if user.role == "admin":
-        return zones
+        return all_zones
 
     allowed = set(await zone_assignment_repo.get_user_zones(db, user.id))
-    return [z for z in zones if z.get("id") in allowed or z.get("name") in allowed]
+    return [z for z in all_zones if z.get("id") in allowed or z.get("name") in allowed]
 
 
 def _build_zone_rrsets(zone_fqdn: str, nameservers: list[str], soa_mname: str, soa_rname: str,
@@ -77,6 +88,17 @@ async def create_zone(
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
+    srv = await pdns_server_repo.get_server(db, body.server_id)
+    if srv is None:
+        raise HTTPException(400, "PowerDNS server not found")
+    if not srv["is_active"]:
+        raise HTTPException(400, "PowerDNS server is not active")
+
+    try:
+        pdns_client = registry.get(srv["id"])
+    except RuntimeError:
+        raise HTTPException(503, f"PowerDNS server '{srv['name']}' is not connected")
+
     nameservers = body.nameservers
     rrsets = None
     template_name = None
@@ -113,7 +135,7 @@ async def create_zone(
         nameservers = []
 
     try:
-        zone = await pdns.create_zone(
+        zone = await pdns_client.create_zone(
             name=body.name,
             kind=body.kind,
             nameservers=nameservers,
@@ -123,19 +145,22 @@ async def create_zone(
     except PDNSError as e:
         _handle_pdns_error(e)
 
+    zone_name = zone.get("name", body.name)
+    await pdns_server_repo.map_zone_to_server(db, zone_name, srv["id"])
+
     detail: dict = {"kind": body.kind}
     if template_name:
         detail["template"] = template_name
     await audit_repo.log_action(
         db, user.id, user.username, "zone.create",
-        zone_name=zone.get("name", body.name),
+        zone_name=zone_name,
         detail=detail,
     )
 
     if body.kind.lower() == "slave":
         zone_id = zone.get("id", body.name)
         try:
-            await pdns.axfr_retrieve(zone_id)
+            await pdns_client.axfr_retrieve(zone_id)
             await audit_repo.log_action(
                 db, user.id, user.username, "zone.axfr_retrieve",
                 zone_name=zone_id,
@@ -150,9 +175,10 @@ async def create_zone(
 async def get_zone(
     zone_id: str,
     user: User = Depends(require_zone_access),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        return await pdns.get_zone(zone_id)
+        return await pdns_client.get_zone(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
 
@@ -163,6 +189,7 @@ async def update_zone(
     body: ZoneUpdate,
     user: User = Depends(require_zone_access),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     data = body.model_dump(exclude_none=True)
     if not data:
@@ -170,7 +197,7 @@ async def update_zone(
     if user.role != "admin" and "kind" in data:
         raise HTTPException(status_code=403, detail="Only admins can change zone type")
     try:
-        await pdns.update_zone(zone_id, data)
+        await pdns_client.update_zone(zone_id, data)
     except PDNSError as e:
         _handle_pdns_error(e)
 
@@ -183,13 +210,15 @@ async def delete_zone(
     zone_id: str,
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        await pdns.delete_zone(zone_id)
+        await pdns_client.delete_zone(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
 
     await zone_assignment_repo.delete_zone_assignments(db, zone_id)
+    await pdns_server_repo.unmap_zone(db, zone_id)
     await audit_repo.log_action(db, user.id, user.username, "zone.delete", zone_name=zone_id)
     return {"ok": True}
 
@@ -200,6 +229,7 @@ async def patch_rrsets(
     rrsets: list[RRSet],
     user: User = Depends(require_zone_access),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     for rs in rrsets:
         if rs.type in _QUOTED_TYPES:
@@ -207,7 +237,7 @@ async def patch_rrsets(
                 record.content = _ensure_quoted(record.content)
     payload = [rs.model_dump() for rs in rrsets]
     try:
-        await pdns.patch_rrsets(zone_id, payload)
+        await pdns_client.patch_rrsets(zone_id, payload)
     except PDNSError as e:
         _handle_pdns_error(e)
 
@@ -225,9 +255,10 @@ async def patch_rrsets(
 async def export_zone(
     zone_id: str,
     user: User = Depends(require_zone_access),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        text = await pdns.export_zone(zone_id)
+        text = await pdns_client.export_zone(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
     from fastapi.responses import PlainTextResponse
@@ -239,9 +270,10 @@ async def rectify_zone(
     zone_id: str,
     user: User = Depends(require_zone_access),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        await pdns.rectify_zone(zone_id)
+        await pdns_client.rectify_zone(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
     await audit_repo.log_action(db, user.id, user.username, "zone.rectify", zone_name=zone_id)
@@ -253,9 +285,10 @@ async def notify_zone(
     zone_id: str,
     user: User = Depends(require_zone_access),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        await pdns.notify_zone(zone_id)
+        await pdns_client.notify_zone(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
     await audit_repo.log_action(db, user.id, user.username, "zone.notify", zone_name=zone_id)
@@ -267,9 +300,10 @@ async def axfr_retrieve(
     zone_id: str,
     user: User = Depends(require_zone_access),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        await pdns.axfr_retrieve(zone_id)
+        await pdns_client.axfr_retrieve(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
     await audit_repo.log_action(db, user.id, user.username, "zone.axfr_retrieve", zone_name=zone_id)
@@ -277,9 +311,13 @@ async def axfr_retrieve(
 
 
 @router.get("/{zone_id}/metadata")
-async def list_metadata(zone_id: str, user: User = Depends(require_zone_access)):
+async def list_metadata(
+    zone_id: str,
+    user: User = Depends(require_zone_access),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
+):
     try:
-        return await pdns.list_metadata(zone_id)
+        return await pdns_client.list_metadata(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
 
@@ -291,9 +329,10 @@ async def set_metadata(
     value: list[str],
     user: User = Depends(require_zone_access),
     db: aiosqlite.Connection = Depends(get_db),
+    pdns_client: PDNSClient = Depends(get_pdns_for_zone),
 ):
     try:
-        await pdns.set_metadata(zone_id, kind, value)
+        await pdns_client.set_metadata(zone_id, kind, value)
     except PDNSError as e:
         _handle_pdns_error(e)
     await audit_repo.log_action(db, user.id, user.username, "metadata.set", zone_name=zone_id, detail={"kind": kind, "value": value})

@@ -40,6 +40,9 @@
                 <th class="sortable" :class="{ sorted: sortBy === 'rrset_count' }" @click="sort('rrset_count')">
                     Records<span class="sort-icon" x-text="sortIcon('rrset_count')"></span>
                 </th>
+                <th class="sortable" :class="{ sorted: sortBy === '_server_name' }" @click="sort('_server_name')">
+                    Server<span class="sort-icon" x-text="sortIcon('_server_name')"></span>
+                </th>
                 <th></th>
             </tr>
         </thead>
@@ -54,6 +57,7 @@
                 </td>
                 <td class="mono text-sm" x-text="zone.serial"></td>
                 <td class="text-dim" x-text="zone.rrset_count != null ? zone.rrset_count : '-'"></td>
+                <td class="text-sm text-dim" x-text="zone._server_name || '—'"></td>
                 <td>
                     <a :href="'/zones/' + zone.id" class="btn btn-sm">Manage</a>
                     <button x-show="isAdmin" class="btn btn-danger btn-sm" @click="deleteZone(zone)">Delete</button>
@@ -61,7 +65,7 @@
             </tr>
         </template>
         <tr x-show="filtered.length === 0">
-            <td colspan="6" class="empty-state">No zones found</td>
+            <td colspan="7" class="empty-state">No zones found</td>
         </tr>
         </tbody>
     </table>
@@ -70,7 +74,7 @@
 {% if user.role == 'admin' %}
 <!-- Create Zone Modal -->
 <div id="create-modal" class="modal-overlay" style="display:none"
-     x-data='createZoneModal({{ zone_templates | tojson }})'
+     x-data='createZoneModal({{ zone_templates | tojson }}, {{ pdns_servers | tojson }})'
      x-init="init()">
     <div class="modal" style="max-width:560px;">
         <div class="modal-header">
@@ -80,6 +84,21 @@
         <form @submit.prevent="submit()">
             <div class="modal-body">
                 <template x-if="error"><div class="flash flash-error" x-text="error"></div></template>
+
+                <!-- Server selector — always shown when multiple servers -->
+                <div class="form-group">
+                    <label>PowerDNS Server</label>
+                    <select x-model="selectedServerId" required>
+                        <option value="">— Select server —</option>
+                        <template x-for="s in servers" :key="s.id">
+                            <option :value="s.id" x-text="s.name"></option>
+                        </template>
+                    </select>
+                    <template x-if="servers.length === 0">
+                        <p style="color:var(--danger);font-size:.85rem;margin:.25rem 0 0">No active PowerDNS servers configured.</p>
+                    </template>
+                </div>
+
                 <div class="form-group">
                     <label>Zone Name</label>
                     <input type="text" x-model="name" placeholder="example.com" required>
@@ -154,7 +173,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn" onclick="document.getElementById('create-modal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary" :disabled="loading">
+                <button type="submit" class="btn btn-primary" :disabled="loading || !selectedServerId">
                     <span x-show="!loading">Create</span>
                     <span x-show="loading">Creating...</span>
                 </button>
@@ -165,13 +184,16 @@
 {% endif %}
 
 <script>
-function createZoneModal(templates) {
+function createZoneModal(templates, servers) {
     const defaultTmpl = templates.find(t => t.is_default) || null;
+    const defaultServer = servers.length === 1 ? servers[0].id : '';
     return {
         templates,
+        servers,
         name: '',
         kind: 'Native',
         masters: '',
+        selectedServerId: defaultServer,
         selectedTemplate: defaultTmpl ? defaultTmpl.id : '',
         nameservers: defaultTmpl ? defaultTmpl.nameservers.join('\n') : '',
         soa_mname: defaultTmpl ? defaultTmpl.soa_mname : '',
@@ -218,7 +240,7 @@ function createZoneModal(templates) {
             this.loading = true;
             this.error = '';
             const ns = this.nameservers.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
-            const body = { name: this.name, kind: this.kind, nameservers: ns };
+            const body = { name: this.name, kind: this.kind, nameservers: ns, server_id: parseInt(this.selectedServerId) };
 
             if (this.kind === 'Slave') {
                 body.masters = this.masters.split(/[\n,]/).map(s => s.trim()).filter(Boolean);

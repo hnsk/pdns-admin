@@ -171,7 +171,7 @@
             {% endif %}
         </nav>
         <div class="user-info">
-            <span>{{ user.username }}</span>
+            <a href="/profile" style="color: var(--text-dim); font-size: 0.875rem;">{{ user.username }}</a>
             <span class="badge">{{ user.role }}</span>
             <a href="/logout" class="btn btn-sm">Logout</a>
         </div>

@@ -47,17 +47,26 @@
 </div>
 {% endif %}
 
-{% if server_info %}
+{% for srv in server_infos %}
 <div class="card mt-2">
-    <div class="card-header">Server Info</div>
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>{{ srv.name }}</span>
+        {% if srv.connected %}
+        <span class="badge badge-green">Connected</span>
+        {% else %}
+        <span class="badge badge-gray">Unreachable</span>
+        {% endif %}
+    </div>
+    {% if srv.connected %}
     <div class="card-body">
         <div class="grid-2">
-            <div><span class="text-dim text-sm">Version:</span> {{ server_info.version }}</div>
-            <div><span class="text-dim text-sm">Server ID:</span> {{ server_info.id }}</div>
-            <div><span class="text-dim text-sm">Daemon Type:</span> {{ server_info.daemon_type }}</div>
-            <div><span class="text-dim text-sm">Config URL:</span> <span class="mono">{{ server_info.config_url }}</span></div>
+            <div><span class="text-dim text-sm">Version:</span> {{ srv.server_info.version }}</div>
+            <div><span class="text-dim text-sm">Server ID:</span> {{ srv.server_info.id }}</div>
+            <div><span class="text-dim text-sm">Daemon Type:</span> {{ srv.server_info.daemon_type }}</div>
+            <div><span class="text-dim text-sm">Zones:</span> {{ srv.zone_count }} ({{ srv.dnssec_count }} DNSSEC signed)</div>
         </div>
     </div>
+    {% endif %}
 </div>
-{% endif %}
+{% endfor %}
 {% endblock %}

@@ -4,7 +4,7 @@ import aiosqlite
 
 from app.auth import require_admin, get_current_user
 from app.database import get_db
-from app.models.user import User, UserCreate, UserUpdate
+from app.models.user import User, UserCreate, UserUpdate, PasswordChange
 from app.repositories import user_repo, zone_assignment_repo, audit_repo
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -114,10 +114,13 @@ async def get_user_zones(
 
 @router.put("/me/password")
 async def change_own_password(
-    new_password: str,
+    body: PasswordChange,
     user: User = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    await user_repo.update_user(db, user.id, password=new_password)
+    verified = await user_repo.verify_password(db, user.username, body.current_password)
+    if not verified:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await user_repo.update_user(db, user.id, password=body.new_password)
     await audit_repo.log_action(db, user.id, user.username, "user.password_change")
     return {"ok": True}

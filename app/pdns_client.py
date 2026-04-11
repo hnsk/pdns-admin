@@ -193,4 +193,44 @@ class PDNSClient:
         await self._request("DELETE", f"/tsigkeys/{key_id}")
 
 
-pdns = PDNSClient()
+class PDNSRegistry:
+    def __init__(self):
+        self._clients: dict[int, PDNSClient] = {}
+
+    async def start_server(
+        self, server_db_id: int, api_url: str, api_key: str, server_id: str
+    ) -> None:
+        client = PDNSClient()
+        await client.start(api_url, api_key, server_id)
+        self._clients[server_db_id] = client
+
+    async def stop_server(self, server_db_id: int) -> None:
+        client = self._clients.pop(server_db_id, None)
+        if client:
+            await client.close()
+
+    async def reconfigure_server(
+        self, server_db_id: int, api_url: str, api_key: str, server_id: str
+    ) -> None:
+        client = self._clients.get(server_db_id)
+        if client:
+            await client.reconfigure(api_url, api_key, server_id)
+        else:
+            await self.start_server(server_db_id, api_url, api_key, server_id)
+
+    def get(self, server_db_id: int) -> PDNSClient:
+        client = self._clients.get(server_db_id)
+        if client is None:
+            raise RuntimeError(f"No client for server id {server_db_id}")
+        return client
+
+    def all(self) -> dict[int, PDNSClient]:
+        return dict(self._clients)
+
+    async def close_all(self) -> None:
+        for client in self._clients.values():
+            await client.close()
+        self._clients.clear()
+
+
+registry = PDNSRegistry()

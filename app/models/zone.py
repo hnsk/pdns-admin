@@ -20,6 +20,7 @@ class ZoneCreate(BaseModel):
     kind: str = "Native"
     nameservers: list[str] = []
     masters: list[str] = []
+    server_id: int
     template_id: int | None = None
     soa_mname: str | None = None
     soa_rname: str | None = None

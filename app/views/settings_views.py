@@ -9,7 +9,7 @@ import aiosqlite
 from app.auth import require_admin
 from app.database import get_db
 from app.models.user import User
-from app.repositories import settings_repo, zone_template_repo
+from app.repositories import pdns_server_repo, zone_template_repo
 
 router = APIRouter(tags=["settings-views"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -21,13 +21,12 @@ async def settings_page(
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    cfg = await settings_repo.get_pdns_settings(db)
+    servers = await pdns_server_repo.list_servers(db)
+    pdns_servers = [{k: v for k, v in s.items() if k != "api_key"} for s in servers]
     zone_templates = await zone_template_repo.list_templates(db)
     return templates.TemplateResponse(request, "settings.html", context={
         "user": user,
         "active_page": "settings",
-        "pdns_api_url": cfg.get("pdns_api_url", ""),
-        "pdns_api_key": cfg.get("pdns_api_key", ""),
-        "pdns_server_id": cfg.get("pdns_server_id", ""),
+        "pdns_servers": pdns_servers,
         "zone_templates": zone_templates,
     })

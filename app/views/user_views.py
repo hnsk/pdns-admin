@@ -6,11 +6,11 @@ from fastapi.templating import Jinja2Templates
 
 import aiosqlite
 
-from app.auth import require_admin
+from app.auth import require_admin, get_current_user
 from app.database import get_db
 from app.models.user import User
-from app.pdns_client import pdns, PDNSError
-from app.repositories import user_repo, zone_assignment_repo
+from app.pdns_client import PDNSError, registry
+from app.repositories import pdns_server_repo, user_repo, zone_assignment_repo
 
 router = APIRouter(tags=["user-views"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -48,10 +48,15 @@ async def user_detail(
 
     assigned_zones = await zone_assignment_repo.get_user_zones(db, user_id)
 
-    try:
-        all_zones = sorted(await pdns.list_zones(), key=lambda z: z["name"])
-    except PDNSError:
-        all_zones = []
+    active_servers = [s for s in await pdns_server_repo.list_servers(db) if s["is_active"]]
+    all_zones = []
+    for srv in active_servers:
+        try:
+            zones = await registry.get(srv["id"]).list_zones()
+            all_zones.extend(zones)
+        except (PDNSError, RuntimeError):
+            pass
+    all_zones = sorted(all_zones, key=lambda z: z["name"])
 
     return templates.TemplateResponse(request, "users/detail.html", context={
         "user": user,
@@ -59,6 +64,14 @@ async def user_detail(
         "target_user": target,
         "assigned_zones": assigned_zones,
         "all_zones": all_zones,
+    })
+
+
+@router.get("/profile", response_class=HTMLResponse)
+async def profile_page(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse(request, "profile.html", context={
+        "user": user,
+        "active_page": "profile",
     })
 
 
