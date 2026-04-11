@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Export {{ zone_id }} - PowerAdmin{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Zone Export: <span class="mono">{{ zone_id }}</span></h1>
+    <a href="/zones/{{ zone_id }}" class="btn">&larr; Back to Zone</a>
+</div>
+<div class="card">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>AXFR / BIND Format</span>
+        <button id="copy-btn" class="btn btn-sm" onclick="copyExport()">Copy to Clipboard</button>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <textarea id="export-text" class="mono" readonly
+            style="width:100%; min-height:400px; padding:1rem; font-size:0.8rem; line-height:1.6;
+                   background:var(--bg-secondary, #1e1e1e); color:var(--text, inherit);
+                   border:none; resize:vertical; box-sizing:border-box; outline:none;">{{ export_data }}</textarea>
+    </div>
+</div>
+<script>
+function copyExport() {
+    const ta = document.getElementById('export-text');
+    ta.select();
+    navigator.clipboard.writeText(ta.value).then(function() {
+        const btn = document.getElementById('copy-btn');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+    }).catch(function() {
+        document.execCommand('copy');
+    });
+}
+</script>
+{% endblock %}

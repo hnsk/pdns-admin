@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}{{ zone.name }} - PowerAdmin{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="mono">{{ zone.name }}</h1>
+        <div class="flex gap-2 items-center mt-1">
+            <span class="badge badge-gray">{{ zone.kind }}</span>
+            {% if zone.dnssec %}
+            <span class="badge badge-green">DNSSEC</span>
+            {% endif %}
+            <span class="text-dim text-sm">Serial: {{ zone.serial }}</span>
+        </div>
+    </div>
+    <div class="btn-group">
+        <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/notify" hx-swap="none"
+            hx-on::after-request="if(event.detail.successful) alert('Notify sent')">Notify</button>
+        <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/rectify" hx-swap="none"
+            hx-on::after-request="if(event.detail.successful) alert('Zone rectified')">Rectify</button>
+        <a href="/zones/{{ zone.id }}/export" class="btn btn-sm">Export</a>
+        {% if user.role == 'admin' %}
+        <a href="/zones/{{ zone.id }}/dnssec" class="btn btn-sm">DNSSEC Keys</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" x-data="zoneEditor()">
+    <div class="card-header">
+        <div class="flex gap-2 items-center">
+            <span>Records</span>
+            <input type="text" x-model="filter" placeholder="Filter records..." style="width: 200px; padding: 0.3rem 0.6rem; font-size: 0.8rem;">
+            <select x-model="typeFilter" style="width: 100px; padding: 0.3rem 0.6rem; font-size: 0.8rem;">
+                <option value="">All Types</option>
+                {% for rt in record_types %}
+                <option value="{{ rt }}">{{ rt }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm" @click="showAdd = true">+ Add Record</button>
+    </div>
+
+    <!-- Add Record Form -->
+    <template x-if="showAdd">
+        <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: rgba(59,130,246,0.05);">
+            <form @submit.prevent="addRecord()">
+                <div class="flex gap-2" style="flex-wrap: wrap; align-items: flex-start;">
+                    <div style="display:flex; align-items:center; gap:0.3rem; flex:0 0 auto;">
+                        <input type="text" x-model="newRec.name" placeholder="@ or subdomain" style="width: 160px;" required>
+                        <span style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">.{{ zone.name }}</span>
+                    </div>
+                    <select x-model="newRec.type" style="width: 110px;" required>
+                        {% for rt in record_types %}
+                        <option value="{{ rt }}">{{ rt }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="number" x-model.number="newRec.ttl" placeholder="TTL" style="width: 80px;" value="3600">
+                    <textarea x-model="newRec.content" placeholder="Record content" style="flex:1; min-width: 200px; resize: vertical; font-family: monospace; font-size: 0.85rem;" rows="2" required></textarea>
+                    <div style="display:flex; flex-direction:column; gap:0.4rem;">
+                        <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem;">
+                            <input type="checkbox" x-model="newRec.disabled"> Disabled
+                        </label>
+                        <button type="submit" class="btn btn-primary btn-sm" :disabled="saving">Save</button>
+                        <button type="button" class="btn btn-sm" @click="showAdd = false">Cancel</button>
+                    </div>
+                </div>
+                <template x-if="addError"><div class="flash flash-error mt-1" x-text="addError"></div></template>
+            </form>
+        </div>
+    </template>
+
+    <!-- Records Table -->
+    <table>
+        <thead>
+            <tr>
+                <th @click="toggleSort('name')" style="cursor:pointer; user-select:none;">
+                    Name <span x-text="sortKey === 'name' ? (sortAsc ? '↑' : '↓') : '↕'" style="font-size:0.75rem; opacity:0.6;"></span>
+                </th>
+                <th @click="toggleSort('type')" style="cursor:pointer; user-select:none;">
+                    Type <span x-text="sortKey === 'type' ? (sortAsc ? '↑' : '↓') : '↕'" style="font-size:0.75rem; opacity:0.6;"></span>
+                </th>
+                <th>TTL</th>
+                <th>Content</th>
+                <th>Status</th>
+                <th style="width:120px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+        <template x-for="row in sortedRows" :key="row.name + '|' + row.type + '|' + row.content">
+            <tr>
+                <td class="mono text-sm" x-text="row.name"></td>
+                <td><span class="badge" :class="'rr-' + row.type" x-text="row.type"></span></td>
+                <td class="mono text-sm" x-show="!row.editing" x-text="row.ttl"></td>
+                <td x-show="row.editing"><input type="number" x-model.number="row.editTTL" style="width:80px; padding:0.2rem 0.4rem; font-size:0.8rem;"></td>
+                <td class="mono text-sm" x-show="!row.editing" style="word-break: break-all;" x-text="row.content"></td>
+                <td x-show="row.editing"><textarea x-model="row.editContent" style="width:100%; padding:0.2rem 0.4rem; font-size:0.8rem; font-family:monospace; resize:vertical;" rows="2"></textarea></td>
+                <td>
+                    <span x-show="row.disabled" class="badge badge-red">disabled</span>
+                    <span x-show="!row.disabled" class="badge badge-green">active</span>
+                </td>
+                <td>
+                    <div class="btn-group">
+                        <button x-show="!row.editing" class="btn btn-sm" @click="row.editing = true">Edit</button>
+                        <button x-show="row.editing" class="btn btn-primary btn-sm" @click="saveRecord(row); row.editing = false;">Save</button>
+                        <button x-show="row.editing" class="btn btn-sm" @click="row.editContent = row.content; row.editTTL = row.ttl; row.editDisabled = row.disabled; row.editing = false;">Cancel</button>
+                        <button x-show="!row.editing" class="btn btn-danger btn-sm" @click="if(confirm('Delete this record?')) deleteRecord(row)">Del</button>
+                    </div>
+                </td>
+            </tr>
+        </template>
+        </tbody>
+    </table>
+</div>
+
+{% if user.role == 'admin' %}
+<div class="card mt-2">
+    <div class="card-header">
+        <span>Zone Settings</span>
+    </div>
+    <div class="card-body" x-data="{ kind: '{{ zone.kind }}', saving: false }">
+        <form @submit.prevent="
+            saving = true;
+            fetch('/api/zones/{{ zone.id }}', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({kind})
+            }).then(r => { saving = false; if(r.ok) location.reload(); else r.json().then(d => alert(d.detail)); })
+        ">
+            <div class="grid-2">
+                <div class="form-group">
+                    <label>Zone Type</label>
+                    <select x-model="kind">
+                        <option value="Native">Native</option>
+                        <option value="Master">Master</option>
+                        <option value="Slave">Slave</option>
+                    </select>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm mt-1" :disabled="saving">Save Settings</button>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-2">
+    <div class="card-header"><span>Danger Zone</span></div>
+    <div class="card-body">
+        <button class="btn btn-danger" onclick="
+            if(confirm('Are you sure you want to delete zone {{ zone.name }}? This cannot be undone.')) {
+                fetch('/api/zones/{{ zone.id }}', {method:'DELETE'}).then(r => {
+                    if(r.ok) window.location.href = '/zones';
+                    else r.json().then(d => alert(d.detail || 'Delete failed'));
+                });
+            }
+        ">Delete Zone</button>
+    </div>
+</div>
+{% endif %}
+
+<script>
+(function() {
+    const _rrsets = {{ zone.rrsets | tojson }};
+    const _rows = [];
+    for (const rs of _rrsets) {
+        for (const rec of rs.records) {
+            _rows.push({
+                name: rs.name,
+                type: rs.type,
+                ttl: rs.ttl,
+                content: rec.content,
+                disabled: rec.disabled,
+                editing: false,
+                editContent: rec.content,
+                editTTL: rs.ttl,
+                editDisabled: rec.disabled,
+            });
+        }
+    }
+    window._zoneRows = _rows;
+})();
+
+function zoneEditor() {
+    const TYPE_PRIORITY = { SOA: 0, NS: 1 };
+
+    return {
+        filter: '',
+        typeFilter: '',
+        showAdd: false,
+        saving: false,
+        addError: '',
+        sortKey: 'name',
+        sortAsc: true,
+        rows: window._zoneRows,
+        newRec: { name: '', type: 'A', ttl: 3600, content: '', disabled: false },
+
+        get sortedRows() {
+            return this.rows
+                .filter(r => this.matchesFilter(r.name, r.type, r.content))
+                .sort((a, b) => {
+                    const pa = TYPE_PRIORITY[a.type] ?? 2;
+                    const pb = TYPE_PRIORITY[b.type] ?? 2;
+                    if (pa !== pb) return pa - pb;
+                    if (pa < 2) return a.name.localeCompare(b.name);
+                    const keyA = this.sortKey === 'type' ? a.type : a.name;
+                    const keyB = this.sortKey === 'type' ? b.type : b.name;
+                    const cmp = keyA.localeCompare(keyB);
+                    if (cmp === 0 && this.sortKey === 'type') return a.name.localeCompare(b.name);
+                    return this.sortAsc ? cmp : -cmp;
+                });
+        },
+
+        toggleSort(key) {
+            if (this.sortKey === key) {
+                this.sortAsc = !this.sortAsc;
+            } else {
+                this.sortKey = key;
+                this.sortAsc = true;
+            }
+        },
+
+        matchesFilter(name, type, content) {
+            if (this.typeFilter && type !== this.typeFilter) return false;
+            if (!this.filter) return true;
+            const q = this.filter.toLowerCase();
+            return name.toLowerCase().includes(q) || content.toLowerCase().includes(q);
+        },
+
+        async addRecord() {
+            this.saving = true;
+            this.addError = '';
+            let name = this.newRec.name.trim();
+            const zoneApex = '{{ zone.name }}';
+            const apex = zoneApex.endsWith('.') ? zoneApex : zoneApex + '.';
+            if (name === '@' || name === '') {
+                name = apex;
+            } else if (name.endsWith('.')) {
+                // already FQDN, leave as-is
+            } else {
+                name = name + '.' + apex;
+            }
+            const payload = [{
+                name: name,
+                type: this.newRec.type,
+                ttl: this.newRec.ttl,
+                changetype: 'REPLACE',
+                records: [{ content: this.newRec.content, disabled: this.newRec.disabled }]
+            }];
+            try {
+                const r = await fetch('/api/zones/{{ zone.id }}/rrsets', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (r.ok) { location.reload(); }
+                else { const d = await r.json(); this.addError = d.detail || 'Failed'; }
+            } catch(e) { this.addError = 'Connection error'; }
+            this.saving = false;
+        },
+
+        async saveRecord(row) {
+            const payload = [{
+                name: row.name,
+                type: row.type,
+                ttl: row.editTTL,
+                changetype: 'REPLACE',
+                records: [{ content: row.editContent, disabled: row.editDisabled }]
+            }];
+            const r = await fetch('/api/zones/{{ zone.id }}/rrsets', {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            if (r.ok) { location.reload(); }
+            else { const d = await r.json(); alert(d.detail || 'Failed'); }
+        },
+
+        async deleteRecord(row) {
+            const payload = [{
+                name: row.name,
+                type: row.type,
+                ttl: row.ttl,
+                changetype: 'DELETE',
+                records: []
+            }];
+            const r = await fetch('/api/zones/{{ zone.id }}/rrsets', {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            if (r.ok) { location.reload(); }
+            else { const d = await r.json(); alert(d.detail || 'Failed'); }
+        }
+    };
+}
+</script>
+{% endblock %}

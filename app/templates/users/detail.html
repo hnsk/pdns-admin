@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}User: {{ target_user.username }} - PowerAdmin{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>User: {{ target_user.username }}</h1>
+    <a href="/users" class="btn">&larr; Back to Users</a>
+</div>
+
+<div class="grid-2">
+    <!-- User Settings -->
+    <div class="card">
+        <div class="card-header">User Settings</div>
+        <div class="card-body" x-data="{ role: '{{ target_user.role }}', is_active: {{ 'true' if target_user.is_active else 'false' }}, password: '', saving: false, saved: false, error: '' }">
+            <form @submit.prevent="
+                saving = true; saved = false; error = '';
+                const body = { role, is_active };
+                if (password) body.password = password;
+                fetch('/api/users/{{ target_user.id }}', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                }).then(r => {
+                    saving = false;
+                    if(r.ok) { saved = true; setTimeout(() => location.reload(), 1000); }
+                    else r.json().then(d => { error = d.detail; });
+                });
+            ">
+                <div class="form-group">
+                    <label>Role</label>
+                    <select x-model="role">
+                        <option value="operator">Operator</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select x-model="is_active">
+                        <option :value="true">Active</option>
+                        <option :value="false">Disabled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>New Password (leave blank to keep)</label>
+                    <input type="password" x-model="password">
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm" :disabled="saving">Save</button>
+                    <span x-show="saved" style="color: var(--success); font-size: 0.875rem;">Saved</span>
+                    <span x-show="error" x-text="error" style="color: var(--danger); font-size: 0.875rem;"></span>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Zone Assignments -->
+    <div class="card">
+        <div class="card-header">
+            <span>Zone Assignments</span>
+        </div>
+        <div class="card-body" x-data="zoneAssignments()">
+            <div class="form-group">
+                <label>Assign Zone</label>
+                <div class="flex gap-2">
+                    <select x-model="selectedZone" style="flex:1">
+                        <option value="">Select zone...</option>
+                        {% for z in all_zones %}
+                        <option value="{{ z.name }}">{{ z.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button class="btn btn-primary btn-sm" @click="addZone()" :disabled="!selectedZone">Add</button>
+                </div>
+            </div>
+
+            <div style="margin-top: 0.5rem;">
+                {% for zn in assigned_zones %}
+                <div class="flex items-center justify-between" style="padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span class="mono text-sm">{{ zn }}</span>
+                    <button class="btn btn-danger btn-sm" @click="removeZone('{{ zn }}')">Remove</button>
+                </div>
+                {% endfor %}
+                {% if not assigned_zones %}
+                <div class="text-dim text-sm">No zones assigned</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if target_user.id != user.id %}
+<div class="card mt-2">
+    <div class="card-header">Danger Zone</div>
+    <div class="card-body" x-data>
+        <button class="btn btn-danger" @click="
+            if(confirm('Delete user {{ target_user.username }}?')) {
+                fetch('/api/users/{{ target_user.id }}', {method:'DELETE'}).then(r => {
+                    if(r.ok) window.location.href = '/users';
+                    else r.json().then(d => alert(d.detail));
+                });
+            }
+        ">Delete User</button>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function zoneAssignments() {
+    return {
+        selectedZone: '',
+        async addZone() {
+            if (!this.selectedZone) return;
+            const zones = [...document.querySelectorAll('[data-zone]')].map(el => el.dataset.zone);
+            zones.push(this.selectedZone);
+            await this.saveZones(zones);
+        },
+        async removeZone(name) {
+            const zones = [...document.querySelectorAll('[data-zone]')].map(el => el.dataset.zone).filter(z => z !== name);
+            await this.saveZones(zones);
+        },
+        async saveZones(zones) {
+            // Get current zones from the page
+            const currentZones = [];
+            document.querySelectorAll('.mono.text-sm').forEach(el => {
+                if (el.closest('[style*="border-bottom"]')) currentZones.push(el.textContent.trim());
+            });
+
+            const allZones = this.selectedZone ? [...currentZones, this.selectedZone] : zones;
+            const r = await fetch('/api/users/{{ target_user.id }}/zones', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(allZones)
+            });
+            if (r.ok) location.reload();
+            else { const d = await r.json(); alert(d.detail); }
+        }
+    };
+}
+</script>
+{% endblock %}

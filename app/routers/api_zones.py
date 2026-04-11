@@ -1,0 +1,285 @@
+from fastapi import APIRouter, Depends, HTTPException
+
+import aiosqlite
+
+from app.auth import get_current_user, require_admin, require_zone_access
+from app.database import get_db
+from app.models.user import User
+from app.models.zone import RRSet, ZoneCreate, ZoneUpdate
+from app.pdns_client import pdns, PDNSError
+from app.repositories import audit_repo, zone_assignment_repo, zone_template_repo
+
+router = APIRouter(prefix="/api/zones", tags=["zones"])
+
+_QUOTED_TYPES = {"TXT", "SPF"}
+
+
+def _ensure_quoted(content: str) -> str:
+    """Wrap TXT/SPF content in double quotes if not already quoted."""
+    content = content.strip()
+    if content.startswith('"') and content.endswith('"') and len(content) >= 2:
+        return content
+    escaped = content.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _handle_pdns_error(e: PDNSError):
+    raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.get("")
+async def list_zones(
+    user: User = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    try:
+        zones = await pdns.list_zones()
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+    if user.role == "admin":
+        return zones
+
+    allowed = set(await zone_assignment_repo.get_user_zones(db, user.id))
+    return [z for z in zones if z.get("id") in allowed or z.get("name") in allowed]
+
+
+def _build_zone_rrsets(zone_fqdn: str, nameservers: list[str], soa_mname: str, soa_rname: str,
+                       soa_refresh: int, soa_retry: int, soa_expire: int, soa_ttl: int) -> list[dict]:
+    """Build SOA and NS rrsets for zone creation from template or manual values."""
+    ns_list = [ns if ns.endswith(".") else ns + "." for ns in nameservers]
+    soa_mname_fqdn = soa_mname if soa_mname.endswith(".") else soa_mname + "."
+    soa_rname_fqdn = soa_rname if soa_rname.endswith(".") else soa_rname + "."
+    soa_content = f"{soa_mname_fqdn} {soa_rname_fqdn} 0 {soa_refresh} {soa_retry} {soa_expire} {soa_ttl}"
+    rrsets = [
+        {
+            "name": zone_fqdn,
+            "type": "SOA",
+            "ttl": soa_ttl,
+            "changetype": "REPLACE",
+            "records": [{"content": soa_content, "disabled": False}],
+        },
+    ]
+    if ns_list:
+        rrsets.append({
+            "name": zone_fqdn,
+            "type": "NS",
+            "ttl": 3600,
+            "changetype": "REPLACE",
+            "records": [{"content": ns, "disabled": False} for ns in ns_list],
+        })
+    return rrsets
+
+
+@router.post("", status_code=201)
+async def create_zone(
+    body: ZoneCreate,
+    user: User = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    nameservers = body.nameservers
+    rrsets = None
+    template_name = None
+
+    if body.template_id is not None:
+        tmpl = await zone_template_repo.get_template(db, body.template_id)
+        if not tmpl:
+            raise HTTPException(status_code=404, detail="Zone template not found")
+        template_name = tmpl["name"]
+        zone_fqdn = body.name if body.name.endswith(".") else body.name + "."
+        rrsets = _build_zone_rrsets(
+            zone_fqdn,
+            nameservers=tmpl["nameservers"],
+            soa_mname=tmpl["soa_mname"],
+            soa_rname=tmpl["soa_rname"],
+            soa_refresh=tmpl["soa_refresh"],
+            soa_retry=tmpl["soa_retry"],
+            soa_expire=tmpl["soa_expire"],
+            soa_ttl=tmpl["soa_ttl"],
+        )
+        nameservers = []
+    elif body.soa_mname and body.soa_rname:
+        zone_fqdn = body.name if body.name.endswith(".") else body.name + "."
+        rrsets = _build_zone_rrsets(
+            zone_fqdn,
+            nameservers=nameservers,
+            soa_mname=body.soa_mname,
+            soa_rname=body.soa_rname,
+            soa_refresh=body.soa_refresh or 3600,
+            soa_retry=body.soa_retry or 900,
+            soa_expire=body.soa_expire or 604800,
+            soa_ttl=body.soa_ttl or 300,
+        )
+        nameservers = []
+
+    try:
+        zone = await pdns.create_zone(
+            name=body.name,
+            kind=body.kind,
+            nameservers=nameservers,
+            masters=body.masters,
+            rrsets=rrsets,
+        )
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+    detail: dict = {"kind": body.kind}
+    if template_name:
+        detail["template"] = template_name
+    await audit_repo.log_action(
+        db, user.id, user.username, "zone.create",
+        zone_name=zone.get("name", body.name),
+        detail=detail,
+    )
+    return zone
+
+
+@router.get("/{zone_id}")
+async def get_zone(
+    zone_id: str,
+    user: User = Depends(require_zone_access),
+):
+    try:
+        return await pdns.get_zone(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+
+@router.put("/{zone_id}")
+async def update_zone(
+    zone_id: str,
+    body: ZoneUpdate,
+    user: User = Depends(require_zone_access),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    data = body.model_dump(exclude_none=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        await pdns.update_zone(zone_id, data)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+    await audit_repo.log_action(db, user.id, user.username, "zone.update", zone_name=zone_id, detail=data)
+    return {"ok": True}
+
+
+@router.delete("/{zone_id}")
+async def delete_zone(
+    zone_id: str,
+    user: User = Depends(require_admin),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    try:
+        await pdns.delete_zone(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+    await audit_repo.log_action(db, user.id, user.username, "zone.delete", zone_name=zone_id)
+    return {"ok": True}
+
+
+@router.patch("/{zone_id}/rrsets")
+async def patch_rrsets(
+    zone_id: str,
+    rrsets: list[RRSet],
+    user: User = Depends(require_zone_access),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    for rs in rrsets:
+        if rs.type in _QUOTED_TYPES:
+            for record in rs.records:
+                record.content = _ensure_quoted(record.content)
+    payload = [rs.model_dump() for rs in rrsets]
+    try:
+        await pdns.patch_rrsets(zone_id, payload)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+    for rs in rrsets:
+        await audit_repo.log_action(
+            db, user.id, user.username,
+            f"record.{rs.changetype.lower()}",
+            zone_name=zone_id,
+            detail={"name": rs.name, "type": rs.type, "ttl": rs.ttl, "records": [r.model_dump() for r in rs.records]},
+        )
+    return {"ok": True}
+
+
+@router.get("/{zone_id}/export")
+async def export_zone(
+    zone_id: str,
+    user: User = Depends(require_zone_access),
+):
+    try:
+        text = await pdns.export_zone(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(text)
+
+
+@router.put("/{zone_id}/rectify")
+async def rectify_zone(
+    zone_id: str,
+    user: User = Depends(require_zone_access),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    try:
+        await pdns.rectify_zone(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+    await audit_repo.log_action(db, user.id, user.username, "zone.rectify", zone_name=zone_id)
+    return {"ok": True}
+
+
+@router.put("/{zone_id}/notify")
+async def notify_zone(
+    zone_id: str,
+    user: User = Depends(require_zone_access),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    try:
+        await pdns.notify_zone(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+    await audit_repo.log_action(db, user.id, user.username, "zone.notify", zone_name=zone_id)
+    return {"ok": True}
+
+
+@router.put("/{zone_id}/axfr-retrieve")
+async def axfr_retrieve(
+    zone_id: str,
+    user: User = Depends(require_zone_access),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    try:
+        await pdns.axfr_retrieve(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+    await audit_repo.log_action(db, user.id, user.username, "zone.axfr_retrieve", zone_name=zone_id)
+    return {"ok": True}
+
+
+@router.get("/{zone_id}/metadata")
+async def list_metadata(zone_id: str, user: User = Depends(require_zone_access)):
+    try:
+        return await pdns.list_metadata(zone_id)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+
+
+@router.put("/{zone_id}/metadata/{kind}")
+async def set_metadata(
+    zone_id: str,
+    kind: str,
+    value: list[str],
+    user: User = Depends(require_zone_access),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    try:
+        await pdns.set_metadata(zone_id, kind, value)
+    except PDNSError as e:
+        _handle_pdns_error(e)
+    await audit_repo.log_action(db, user.id, user.username, "metadata.set", zone_name=zone_id, detail={"kind": kind, "value": value})
+    return {"ok": True}

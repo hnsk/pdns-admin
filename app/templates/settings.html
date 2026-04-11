@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Settings – PowerAdmin{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Settings</h1>
+</div>
+
+<div x-data="{ tab: 'server' }">
+    <div class="tabs">
+        <button class="tab" :class="{ active: tab === 'server' }" @click="tab = 'server'">Server</button>
+        <button class="tab" :class="{ active: tab === 'templates' }" @click="tab = 'templates'">Zone Templates</button>
+    </div>
+
+    <!-- Server Settings Tab -->
+    <div x-show="tab === 'server'">
+        <div class="card" style="max-width: 640px;">
+            <div class="card-header">PowerDNS API Connection</div>
+            <div class="card-body">
+                <div id="settings-flash"></div>
+                <form id="pdns-settings-form">
+                    <div class="form-group">
+                        <label for="pdns_api_url">API URL</label>
+                        <input type="text" id="pdns_api_url" name="pdns_api_url"
+                               value="{{ pdns_api_url }}" placeholder="http://localhost:8081" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="pdns_api_key">API Key</label>
+                        <input type="password" id="pdns_api_key" name="pdns_api_key"
+                               value="{{ pdns_api_key }}" placeholder="API key" required
+                               autocomplete="new-password">
+                        <div class="mt-1" style="display:flex; gap:.5rem; align-items:center;">
+                            <input type="checkbox" id="show-key" onchange="
+                                document.getElementById('pdns_api_key').type = this.checked ? 'text' : 'password'
+                            ">
+                            <label for="show-key" style="margin:0; font-size:.8rem;">Show key</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="pdns_server_id">Server ID</label>
+                        <input type="text" id="pdns_server_id" name="pdns_server_id"
+                               value="{{ pdns_server_id }}" placeholder="localhost" required>
+                    </div>
+                    <div class="btn-group mt-2">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" class="btn" id="test-btn" onclick="testConnection()">Test Connection</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone Templates Tab -->
+    <div x-show="tab === 'templates'" x-data="zoneTemplates()" x-init="init()">
+        <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>Zone Templates (SOA &amp; NS)</span>
+                <button class="btn btn-sm btn-primary" @click="openAdd()">+ Add Template</button>
+            </div>
+            <div class="card-body" style="padding:0">
+                <template x-if="templates.length === 0 && !showForm">
+                    <p style="padding:1rem; color:var(--text-dim);">No templates defined. Add one to pre-fill SOA and nameservers when creating zones.</p>
+                </template>
+                <table x-show="templates.length > 0">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Nameservers</th>
+                            <th>SOA Primary NS</th>
+                            <th>SOA Hostmaster</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="t in templates" :key="t.id">
+                            <tr>
+                                <td>
+                                    <span x-text="t.name"></span>
+                                    <span x-show="t.is_default" class="badge badge-green" style="margin-left:.4rem;">default</span>
+                                </td>
+                                <td class="mono text-sm" x-text="t.nameservers.join(', ') || '—'"></td>
+                                <td class="mono text-sm" x-text="t.soa_mname || '—'"></td>
+                                <td class="mono text-sm" x-text="t.soa_rname || '—'"></td>
+                                <td style="white-space:nowrap">
+                                    <button class="btn btn-sm" @click="openEdit(t)">Edit</button>
+                                    <button x-show="!t.is_default" class="btn btn-sm" @click="setDefault(t.id)">Set Default</button>
+                                    <button class="btn btn-sm btn-danger" @click="deleteTemplate(t)">Delete</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+
+                <!-- Add/Edit form -->
+                <div x-show="showForm" style="padding:1rem; border-top:1px solid var(--border)">
+                    <div id="tmpl-flash"></div>
+                    <h3 x-text="editId ? 'Edit Template' : 'New Template'" style="margin:0 0 1rem;font-size:1rem;"></h3>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label>Template Name</label>
+                            <input type="text" x-model="form.name" placeholder="e.g. Default NS set">
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label>Nameservers <span style="font-weight:normal; color:var(--text-dim)">(one per line)</span></label>
+                            <textarea x-model="form.nameserversRaw" rows="3" placeholder="ns1.example.com.&#10;ns2.example.com." class="mono"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>SOA Primary NS (mname)</label>
+                            <input type="text" x-model="form.soa_mname" placeholder="ns1.example.com." class="mono">
+                        </div>
+                        <div class="form-group">
+                            <label>SOA Hostmaster (rname)</label>
+                            <input type="text" x-model="form.soa_rname" placeholder="hostmaster.example.com." class="mono">
+                        </div>
+                        <div class="form-group">
+                            <label>Refresh (s)</label>
+                            <input type="number" x-model.number="form.soa_refresh" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Retry (s)</label>
+                            <input type="number" x-model.number="form.soa_retry" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Expire (s)</label>
+                            <input type="number" x-model.number="form.soa_expire" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Minimum TTL (s)</label>
+                            <input type="number" x-model.number="form.soa_ttl" min="1">
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1; display:flex; align-items:center; gap:.5rem;">
+                            <input type="checkbox" id="tmpl-is-default" x-model="form.is_default">
+                            <label for="tmpl-is-default" style="margin:0;">Mark as default</label>
+                        </div>
+                    </div>
+                    <div class="btn-group mt-2">
+                        <button class="btn btn-primary" @click="saveTemplate()" :disabled="saving">
+                            <span x-show="!saving" x-text="editId ? 'Save' : 'Create'"></span>
+                            <span x-show="saving">Saving…</span>
+                        </button>
+                        <button class="btn" @click="cancelForm()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function zoneTemplates() {
+    return {
+        templates: {{ zone_templates | tojson }},
+        showForm: false,
+        editId: null,
+        saving: false,
+        form: { name:'', nameserversRaw:'', soa_mname:'', soa_rname:'', soa_refresh:3600, soa_retry:900, soa_expire:604800, soa_ttl:300, is_default:false },
+
+        init() {},
+
+        openAdd() {
+            this.editId = null;
+            this.form = { name:'', nameserversRaw:'', soa_mname:'', soa_rname:'', soa_refresh:3600, soa_retry:900, soa_expire:604800, soa_ttl:300, is_default:false };
+            this.showForm = true;
+        },
+
+        openEdit(t) {
+            this.editId = t.id;
+            this.form = {
+                name: t.name,
+                nameserversRaw: t.nameservers.join('\n'),
+                soa_mname: t.soa_mname,
+                soa_rname: t.soa_rname,
+                soa_refresh: t.soa_refresh,
+                soa_retry: t.soa_retry,
+                soa_expire: t.soa_expire,
+                soa_ttl: t.soa_ttl,
+                is_default: t.is_default,
+            };
+            this.showForm = true;
+        },
+
+        cancelForm() { this.showForm = false; this.editId = null; },
+
+        async saveTemplate() {
+            const flash = document.getElementById('tmpl-flash');
+            flash.innerHTML = '';
+            this.saving = true;
+            const ns = this.form.nameserversRaw.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+            const body = {
+                name: this.form.name,
+                nameservers: ns,
+                soa_mname: this.form.soa_mname,
+                soa_rname: this.form.soa_rname,
+                soa_refresh: this.form.soa_refresh,
+                soa_retry: this.form.soa_retry,
+                soa_expire: this.form.soa_expire,
+                soa_ttl: this.form.soa_ttl,
+                is_default: this.form.is_default,
+            };
+            const url = this.editId ? `/api/zone-templates/${this.editId}` : '/api/zone-templates';
+            const method = this.editId ? 'PUT' : 'POST';
+            const resp = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            this.saving = false;
+            if (resp.ok) {
+                const saved = await resp.json();
+                if (this.editId) {
+                    const idx = this.templates.findIndex(t => t.id === this.editId);
+                    if (idx !== -1) this.templates.splice(idx, 1, saved);
+                    if (saved.is_default) this.templates.forEach(t => { if (t.id !== saved.id) t.is_default = false; });
+                } else {
+                    if (saved.is_default) this.templates.forEach(t => { t.is_default = false; });
+                    this.templates.push(saved);
+                }
+                this.cancelForm();
+            } else {
+                const err = await resp.json().catch(() => ({detail: 'Save failed'}));
+                flash.innerHTML = `<div class="flash flash-error">${err.detail}</div>`;
+            }
+        },
+
+        async setDefault(id) {
+            const resp = await fetch(`/api/zone-templates/${id}/set-default`, { method: 'POST' });
+            if (resp.ok) {
+                this.templates.forEach(t => { t.is_default = t.id === id; });
+            }
+        },
+
+        async deleteTemplate(t) {
+            if (!confirm(`Delete template "${t.name}"?`)) return;
+            const resp = await fetch(`/api/zone-templates/${t.id}`, { method: 'DELETE' });
+            if (resp.ok || resp.status === 204) {
+                this.templates = this.templates.filter(x => x.id !== t.id);
+            }
+        },
+    };
+}
+</script>
+
+<script>
+document.getElementById('pdns-settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const flash = document.getElementById('settings-flash');
+    flash.innerHTML = '';
+
+    const body = {
+        pdns_api_url: document.getElementById('pdns_api_url').value.trim(),
+        pdns_api_key: document.getElementById('pdns_api_key').value,
+        pdns_server_id: document.getElementById('pdns_server_id').value.trim(),
+    };
+
+    const resp = await fetch('/api/settings/pdns', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    });
+
+    if (resp.ok) {
+        flash.innerHTML = '<div class="flash flash-success">Settings saved and connection reconfigured.</div>';
+    } else {
+        const err = await resp.json().catch(() => ({detail: resp.statusText}));
+        flash.innerHTML = `<div class="flash flash-error">${err.detail || 'Failed to save settings.'}</div>`;
+    }
+});
+
+async function testConnection() {
+    const flash = document.getElementById('settings-flash');
+    flash.innerHTML = '<div class="flash flash-info">Testing connection…</div>';
+    const body = {
+        pdns_api_url: document.getElementById('pdns_api_url').value.trim(),
+        pdns_api_key: document.getElementById('pdns_api_key').value,
+        pdns_server_id: document.getElementById('pdns_server_id').value.trim(),
+    };
+    const resp = await fetch('/api/settings/pdns/test', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+        const data = await resp.json();
+        flash.innerHTML = `<div class="flash flash-success">Connection OK — ${data.detail}</div>`;
+    } else {
+        const err = await resp.json().catch(() => ({detail: 'Connection failed. Check the API URL, key, and server ID.'}));
+        flash.innerHTML = `<div class="flash flash-error">${err.detail}</div>`;
+    }
+}
+</script>
+{% endblock %}
