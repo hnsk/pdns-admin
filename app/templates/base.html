@@ -162,7 +162,7 @@
             PowerAdmin
         </div>
         <nav>
-            <a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+            {% if user.role == 'admin' %}<a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>{% endif %}
             <a href="/zones" class="{% if active_page == 'zones' %}active{% endif %}">Zones</a>
             {% if user.role == 'admin' %}
             <a href="/users" class="{% if active_page == 'users' %}active{% endif %}">Users</a>

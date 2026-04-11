@@ -93,8 +93,14 @@
                     </select>
                 </div>
 
-                <!-- Template selector -->
-                <div class="form-group">
+                <!-- Master IPs — only for Slave zones -->
+                <div class="form-group" x-show="kind === 'Slave'">
+                    <label>Master IPs <span style="color:var(--text-dim);font-weight:normal">(one per line)</span></label>
+                    <textarea x-model="masters" rows="2" placeholder="192.0.2.1&#10;2001:db8::1" class="mono"></textarea>
+                </div>
+
+                <!-- Template selector — not needed for Slave zones -->
+                <div class="form-group" x-show="kind !== 'Slave'">
                     <label>SOA &amp; NS Template</label>
                     <select x-model="selectedTemplate" @change="onTemplateChange()">
                         <option value="">— None (manual) —</option>
@@ -104,14 +110,14 @@
                     </select>
                 </div>
 
-                <!-- Nameservers — always visible, pre-filled from template -->
-                <div class="form-group">
+                <!-- Nameservers — not needed for Slave zones -->
+                <div class="form-group" x-show="kind !== 'Slave'">
                     <label>Nameservers <span style="color:var(--text-dim);font-weight:normal">(one per line)</span></label>
                     <textarea x-model="nameservers" rows="3" placeholder="ns1.example.com.&#10;ns2.example.com." class="mono"></textarea>
                 </div>
 
-                <!-- SOA fields toggle -->
-                <div>
+                <!-- SOA fields toggle — not needed for Slave zones -->
+                <div x-show="kind !== 'Slave'">
                     <button type="button"
                             style="background:none;border:none;cursor:pointer;padding:.4rem 0;color:var(--text-dim);font-size:.85rem;"
                             @click="soaVisible = !soaVisible">
@@ -165,6 +171,7 @@ function createZoneModal(templates) {
         templates,
         name: '',
         kind: 'Native',
+        masters: '',
         selectedTemplate: defaultTmpl ? defaultTmpl.id : '',
         nameservers: defaultTmpl ? defaultTmpl.nameservers.join('\n') : '',
         soa_mname: defaultTmpl ? defaultTmpl.soa_mname : '',
@@ -213,7 +220,9 @@ function createZoneModal(templates) {
             const ns = this.nameservers.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
             const body = { name: this.name, kind: this.kind, nameservers: ns };
 
-            if (this.selectedTemplate !== '') {
+            if (this.kind === 'Slave') {
+                body.masters = this.masters.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+            } else if (this.selectedTemplate !== '') {
                 body.template_id = parseInt(this.selectedTemplate);
             } else if (this.soa_mname && this.soa_rname) {
                 body.soa_mname = this.soa_mname;
@@ -233,6 +242,9 @@ function createZoneModal(templates) {
             if (!resp) { this.error = 'Connection error'; this.loading = false; return; }
             if (resp.ok) {
                 const z = await resp.json();
+                if (this.kind === 'Slave') {
+                    await new Promise(r => setTimeout(r, 1000));
+                }
                 window.location.href = '/zones/' + z.id;
             } else {
                 const d = await resp.json().catch(() => ({}));

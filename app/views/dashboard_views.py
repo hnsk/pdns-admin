@@ -28,11 +28,11 @@ async def dashboard(request: Request, db: aiosqlite.Connection = Depends(get_db)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
+    if user.role == "operator":
+        return RedirectResponse(url="/zones", status_code=302)
+
     try:
         zones = await pdns.list_zones()
-        if user.role == "operator":
-            allowed = set(await zone_assignment_repo.get_user_zones(db, user.id))
-            zones = [z for z in zones if z.get("id") in allowed or z.get("name") in allowed]
         zone_count = len(zones)
         dnssec_count = sum(1 for z in zones if z.get("dnssec"))
     except PDNSError:

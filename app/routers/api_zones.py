@@ -131,6 +131,18 @@ async def create_zone(
         zone_name=zone.get("name", body.name),
         detail=detail,
     )
+
+    if body.kind.lower() == "slave":
+        zone_id = zone.get("id", body.name)
+        try:
+            await pdns.axfr_retrieve(zone_id)
+            await audit_repo.log_action(
+                db, user.id, user.username, "zone.axfr_retrieve",
+                zone_name=zone_id,
+            )
+        except PDNSError:
+            pass  # non-fatal: zone created, AXFR can be triggered manually
+
     return zone
 
 
@@ -155,6 +167,8 @@ async def update_zone(
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
+    if user.role != "admin" and "kind" in data:
+        raise HTTPException(status_code=403, detail="Only admins can change zone type")
     try:
         await pdns.update_zone(zone_id, data)
     except PDNSError as e:
@@ -175,6 +189,7 @@ async def delete_zone(
     except PDNSError as e:
         _handle_pdns_error(e)
 
+    await zone_assignment_repo.delete_zone_assignments(db, zone_id)
     await audit_repo.log_action(db, user.id, user.username, "zone.delete", zone_name=zone_id)
     return {"ok": True}
 

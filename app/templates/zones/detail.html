@@ -35,6 +35,11 @@
                 <option value="{{ rt }}">{{ rt }}</option>
                 {% endfor %}
             </select>
+            {% if zone.kind == 'Slave' %}
+            <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem; white-space:nowrap; color:var(--text-dim);">
+                <input type="checkbox" x-model="hideDNSSEC"> Hide RRSIG/DNSKEY
+            </label>
+            {% endif %}
         </div>
         <button class="btn btn-primary btn-sm" @click="showAdd = true">+ Add Record</button>
     </div>
@@ -111,20 +116,14 @@
     </table>
 </div>
 
-{% if user.role == 'admin' %}
+{% if user.role == 'admin' or zone.kind == 'Slave' %}
 <div class="card mt-2">
     <div class="card-header">
         <span>Zone Settings</span>
     </div>
-    <div class="card-body" x-data="{ kind: '{{ zone.kind }}', saving: false }">
-        <form @submit.prevent="
-            saving = true;
-            fetch('/api/zones/{{ zone.id }}', {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({kind})
-            }).then(r => { saving = false; if(r.ok) location.reload(); else r.json().then(d => alert(d.detail)); })
-        ">
+    <div class="card-body" x-data="zoneSettings()">
+        <form @submit.prevent="saveSettings()">
+            {% if user.role == 'admin' %}
             <div class="grid-2">
                 <div class="form-group">
                     <label>Zone Type</label>
@@ -135,11 +134,27 @@
                     </select>
                 </div>
             </div>
+            <div class="form-group" x-show="kind === 'Slave'" style="margin-top:.75rem;">
+            {% else %}
+            <div class="form-group">
+            {% endif %}
+                <label>Master IPs <span style="color:var(--text-dim);font-weight:normal">(one per line)</span></label>
+                <textarea x-model="masters" rows="2" class="mono" placeholder="192.0.2.1&#10;2001:db8::1"></textarea>
+            </div>
             <button type="submit" class="btn btn-primary btn-sm mt-1" :disabled="saving">Save Settings</button>
         </form>
+        <div x-show="kind === 'Slave'" style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
+            <button class="btn btn-sm" :disabled="axfrLoading" @click="axfrRetrieve()">
+                <span x-show="!axfrLoading">Retrieve from Master</span>
+                <span x-show="axfrLoading">Retrieving...</span>
+            </button>
+            <span x-show="axfrMsg" x-text="axfrMsg" style="margin-left:.75rem; font-size:.85rem; color:var(--text-dim);"></span>
+        </div>
     </div>
 </div>
+{% endif %}
 
+{% if user.role == 'admin' %}
 <div class="card mt-2">
     <div class="card-header"><span>Danger Zone</span></div>
     <div class="card-body">
@@ -177,12 +192,69 @@
     window._zoneRows = _rows;
 })();
 
+function zoneSettings() {
+    return {
+        kind: {{ zone.kind | tojson }},
+        masters: {{ (zone.masters or []) | tojson }}.join('\n'),
+        saving: false,
+        axfrLoading: false,
+        axfrMsg: '',
+        async saveSettings() {
+            this.saving = true;
+            const body = {};
+            {% if user.role == 'admin' %}body.kind = this.kind;{% endif %}
+            if (this.kind === 'Slave') {
+                body.masters = this.masters.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+            }
+            const r = await fetch('/api/zones/{{ zone.id }}', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            this.saving = false;
+            if (r.ok) location.reload();
+            else r.json().then(d => alert(d.detail));
+        },
+        async axfrRetrieve() {
+            this.axfrLoading = true;
+            this.axfrMsg = '';
+            // Save current kind + masters to PowerDNS before triggering AXFR,
+            // so the specified master IPs are used even if settings weren't saved yet.
+            const body = {};
+            {% if user.role == 'admin' %}body.kind = this.kind;{% endif %}
+            if (this.kind === 'Slave') {
+                body.masters = this.masters.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+            }
+            const save = await fetch('/api/zones/{{ zone.id }}', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if (!save.ok) {
+                const e = await save.json().catch(() => ({}));
+                this.axfrLoading = false;
+                this.axfrMsg = e.detail || 'Failed to save settings';
+                return;
+            }
+            const r = await fetch('/api/zones/{{ zone.id }}/axfr-retrieve', { method: 'PUT' });
+            this.axfrLoading = false;
+            const d = await r.json().catch(() => ({}));
+            if (r.ok) {
+                this.axfrMsg = 'Transfer initiated';
+            } else {
+                this.axfrMsg = d.detail || 'Transfer failed';
+            }
+        }
+    };
+}
+
 function zoneEditor() {
     const TYPE_PRIORITY = { SOA: 0, NS: 1 };
 
     return {
         filter: '',
         typeFilter: '',
+        hideDNSSEC: {{ 'true' if zone.kind == 'Slave' else 'false' }},
         showAdd: false,
         saving: false,
         addError: '',
@@ -192,7 +264,9 @@ function zoneEditor() {
         newRec: { name: '', type: 'A', ttl: 3600, content: '', disabled: false },
 
         get sortedRows() {
+            const DNSSEC_TYPES = new Set(['RRSIG', 'DNSKEY']);
             return this.rows
+                .filter(r => !(this.hideDNSSEC && DNSSEC_TYPES.has(r.type)))
                 .filter(r => this.matchesFilter(r.name, r.type, r.content))
                 .sort((a, b) => {
                     const pa = TYPE_PRIORITY[a.type] ?? 2;

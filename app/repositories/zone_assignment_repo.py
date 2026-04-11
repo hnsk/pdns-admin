@@ -31,6 +31,11 @@ async def set_user_zones(db: aiosqlite.Connection, user_id: int, zone_names: lis
     await db.commit()
 
 
+async def delete_zone_assignments(db: aiosqlite.Connection, zone_name: str) -> None:
+    await db.execute("DELETE FROM zone_assignments WHERE zone_name = ?", (zone_name,))
+    await db.commit()
+
+
 async def user_has_zone_access(db: aiosqlite.Connection, user_id: int, zone_name: str) -> bool:
     rows = await db.execute_fetchall(
         "SELECT 1 FROM zone_assignments WHERE user_id = ? AND zone_name = ?", (user_id, zone_name)

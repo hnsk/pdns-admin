@@ -61,12 +61,26 @@
             <div class="form-group">
                 <label>Assign Zone</label>
                 <div class="flex gap-2">
-                    <select x-model="selectedZone" style="flex:1">
-                        <option value="">Select zone...</option>
-                        {% for z in all_zones %}
-                        <option value="{{ z.name }}">{{ z.name }}</option>
-                        {% endfor %}
-                    </select>
+                    <div style="flex:1; position:relative;" @click.outside="dropdownOpen=false">
+                        <input type="text" x-model="query"
+                            @focus="dropdownOpen=true"
+                            @input="dropdownOpen=true; selectedZone=''"
+                            placeholder="Search zone..."
+                            style="width:100%">
+                        <div x-show="dropdownOpen && filteredZones.length > 0"
+                            style="position:absolute; z-index:50; width:100%; max-height:200px; overflow-y:auto;
+                                   background:var(--bg-card); border:1px solid var(--border); border-radius:6px;
+                                   margin-top:2px; box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+                            <template x-for="z in filteredZones" :key="z">
+                                <div x-text="z"
+                                    @click="selectedZone=z; query=z; dropdownOpen=false"
+                                    style="padding:0.4rem 0.75rem; cursor:pointer; font-size:0.875rem;"
+                                    @mouseenter="$el.style.background='var(--bg-hover)'"
+                                    @mouseleave="$el.style.background=''">
+                                </div>
+                            </template>
+                        </div>
+                    </div>
                     <button class="btn btn-primary btn-sm" @click="addZone()" :disabled="!selectedZone">Add</button>
                 </div>
             </div>
@@ -106,6 +120,13 @@
 function zoneAssignments() {
     return {
         selectedZone: '',
+        query: '',
+        dropdownOpen: false,
+        allZones: {{ all_zones | map(attribute='name') | list | tojson }},
+        get filteredZones() {
+            const q = this.query.toLowerCase();
+            return this.allZones.filter(z => z.toLowerCase().includes(q));
+        },
         async addZone() {
             if (!this.selectedZone) return;
             const zones = [...document.querySelectorAll('[data-zone]')].map(el => el.dataset.zone);

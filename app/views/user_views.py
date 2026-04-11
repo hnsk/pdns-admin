@@ -49,7 +49,7 @@ async def user_detail(
     assigned_zones = await zone_assignment_repo.get_user_zones(db, user_id)
 
     try:
-        all_zones = await pdns.list_zones()
+        all_zones = sorted(await pdns.list_zones(), key=lambda z: z["name"])
     except PDNSError:
         all_zones = []
 
