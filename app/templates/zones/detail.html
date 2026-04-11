@@ -75,10 +75,31 @@
         </div>
     </template>
 
+    <!-- Bulk Action Toolbar -->
+    <div x-show="selectedCount > 0" style="padding: 0.5rem 1.25rem; border-bottom: 1px solid var(--border); background: rgba(59,130,246,0.05); display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <span x-text="selectedCount + ' selected'" style="font-size:0.85rem; font-weight:500; color:var(--text-dim);"></span>
+        <button @click="bulkDelete()" class="btn btn-danger btn-sm" :disabled="bulkSaving">Delete</button>
+        <button @click="bulkSetDisabled(false)" class="btn btn-sm" :disabled="bulkSaving">Enable</button>
+        <button @click="bulkSetDisabled(true)" class="btn btn-sm" :disabled="bulkSaving">Disable</button>
+        <template x-if="!bulkMixedTypes">
+            <span style="display:flex; align-items:center; gap:0.4rem;">
+                <input type="text" x-model="bulkContent" placeholder="New content..." class="mono" style="width:220px; padding:0.25rem 0.5rem; font-size:0.8rem;">
+                <button @click="bulkSetContent()" class="btn btn-primary btn-sm" :disabled="!bulkContent.trim() || bulkSaving">Apply</button>
+            </span>
+        </template>
+        <template x-if="bulkMixedTypes">
+            <span style="color:var(--text-dim); font-size:.85rem;">Select same type to edit content</span>
+        </template>
+        <button @click="clearSelection()" class="btn btn-sm">Clear</button>
+    </div>
+
     <!-- Records Table -->
     <table>
         <thead>
             <tr>
+                <th style="width:36px;">
+                    <input type="checkbox" :checked="allVisibleSelected" @change="toggleSelectAll($event.target.checked)">
+                </th>
                 <th @click="toggleSort('name')" style="cursor:pointer; user-select:none;">
                     Name <span x-text="sortKey === 'name' ? (sortAsc ? '↑' : '↓') : '↕'" style="font-size:0.75rem; opacity:0.6;"></span>
                 </th>
@@ -94,6 +115,7 @@
         <tbody>
         <template x-for="row in sortedRows" :key="row.name + '|' + row.type + '|' + row.content">
             <tr>
+                <td><input type="checkbox" x-model="row.selected"></td>
                 <td class="mono text-sm" x-text="row.name"></td>
                 <td><span class="badge" :class="'rr-' + row.type" x-text="row.type"></span></td>
                 <td class="mono text-sm" x-show="!row.editing" x-text="row.ttl"></td>
@@ -197,6 +219,7 @@ const _sidQ = _serverId ? '?server_id=' + _serverId : '';
                 editContent: rec.content,
                 editTTL: rs.ttl,
                 editDisabled: rec.disabled,
+                selected: false,
             });
         }
     }
@@ -273,6 +296,8 @@ function zoneEditor() {
         sortAsc: true,
         rows: window._zoneRows,
         newRec: { name: '', type: 'A', ttl: {{ default_ttl }}, content: '', disabled: false },
+        bulkContent: '',
+        bulkSaving: false,
 
         get sortedRows() {
             const DNSSEC_TYPES = new Set(['RRSIG', 'DNSKEY']);
@@ -290,6 +315,113 @@ function zoneEditor() {
                     if (cmp === 0 && this.sortKey === 'type') return a.name.localeCompare(b.name);
                     return this.sortAsc ? cmp : -cmp;
                 });
+        },
+
+        get selectedCount() {
+            return this.rows.filter(r => r.selected).length;
+        },
+        get allVisibleSelected() {
+            const vis = this.sortedRows;
+            return vis.length > 0 && vis.every(r => r.selected);
+        },
+        get bulkMixedTypes() {
+            const sel = this.rows.filter(r => r.selected);
+            if (sel.length === 0) return false;
+            return new Set(sel.map(r => r.type)).size > 1;
+        },
+
+        buildRRSetMap() {
+            const map = {};
+            for (const r of this.rows) {
+                const key = r.name + '|' + r.type;
+                if (!map[key]) map[key] = { name: r.name, type: r.type, ttl: r.ttl, rows: [] };
+                map[key].rows.push(r);
+            }
+            return map;
+        },
+
+        toggleSelectAll(checked) {
+            for (const r of this.sortedRows) r.selected = checked;
+        },
+        clearSelection() {
+            for (const r of this.rows) r.selected = false;
+        },
+
+        async bulkDelete() {
+            const sel = this.rows.filter(r => r.selected);
+            if (!sel.length) return;
+            const count = sel.length;
+            if (!confirm(`Delete ${count} record(s)? Entire RRSets will be removed.`)) return;
+            const seen = new Set();
+            const payload = [];
+            for (const r of sel) {
+                const key = r.name + '|' + r.type;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    payload.push({ name: r.name, type: r.type, ttl: r.ttl, changetype: 'DELETE', records: [] });
+                }
+            }
+            this.bulkSaving = true;
+            const resp = await fetch('/api/zones/{{ zone.id }}/rrsets' + _sidQ, {
+                method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+            });
+            this.bulkSaving = false;
+            if (resp.ok) location.reload();
+            else { const d = await resp.json(); alert(d.detail || 'Bulk delete failed'); }
+        },
+
+        async bulkSetDisabled(disabled) {
+            const sel = this.rows.filter(r => r.selected);
+            if (!sel.length) return;
+            const map = this.buildRRSetMap();
+            const affectedKeys = new Set(sel.map(r => r.name + '|' + r.type));
+            const payload = [];
+            for (const key of affectedKeys) {
+                const rs = map[key];
+                payload.push({
+                    name: rs.name, type: rs.type, ttl: rs.ttl, changetype: 'REPLACE',
+                    records: rs.rows.map(r => ({
+                        content: r.content,
+                        disabled: r.selected ? disabled : r.disabled
+                    }))
+                });
+            }
+            this.bulkSaving = true;
+            const resp = await fetch('/api/zones/{{ zone.id }}/rrsets' + _sidQ, {
+                method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+            });
+            this.bulkSaving = false;
+            if (resp.ok) location.reload();
+            else { const d = await resp.json(); alert(d.detail || 'Bulk update failed'); }
+        },
+
+        async bulkSetContent() {
+            if (this.bulkMixedTypes) return;
+            const newContent = this.bulkContent.trim();
+            if (!newContent) return;
+            const sel = this.rows.filter(r => r.selected);
+            if (!sel.length) return;
+            const map = this.buildRRSetMap();
+            const affectedKeys = new Set(sel.map(r => r.name + '|' + r.type));
+            const selSet = new Set(sel.map(r => r.name + '|' + r.type + '|' + r.content));
+            const payload = [];
+            for (const key of affectedKeys) {
+                const rs = map[key];
+                payload.push({
+                    name: rs.name, type: rs.type, ttl: rs.ttl, changetype: 'REPLACE',
+                    records: rs.rows.map(r => ({
+                        content: selSet.has(r.name + '|' + r.type + '|' + r.content) ? newContent : r.content,
+                        disabled: r.disabled
+                    }))
+                });
+            }
+            this.bulkSaving = true;
+            const resp = await fetch('/api/zones/{{ zone.id }}/rrsets' + _sidQ, {
+                method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+            });
+            this.bulkSaving = false;
+            if (resp.ok) location.reload();
+            else { const d = await resp.json(); alert(d.detail || 'Bulk content update failed'); }
         },
 
         toggleSort(key) {
