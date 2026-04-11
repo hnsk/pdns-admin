@@ -20,6 +20,31 @@
         </div>
     </div>
 
+    <div class="card mt-2" x-data="prefsForm()">
+        <div class="card-header">Preferences</div>
+        <div class="card-body">
+            <template x-if="prefError">
+                <div class="flash flash-error" x-text="prefError"></div>
+            </template>
+            <template x-if="prefSuccess">
+                <div class="flash flash-success">Preferences saved.</div>
+            </template>
+            <div class="form-group">
+                <label>Default Record TTL (seconds)</label>
+                <input type="number" x-model.number="defaultTTL" min="1" style="max-width:140px;">
+                <p style="margin:.4rem 0 0; font-size:.8rem; color:var(--text-dim);">
+                    Overrides the global default ({{ global_default_ttl }}s) for your account. Clear to use the global default.
+                </p>
+            </div>
+            <div style="display:flex; gap:.5rem; align-items:center;">
+                <button class="btn btn-primary" @click="save()" :disabled="prefLoading">
+                    <span x-text="prefLoading ? 'Saving…' : 'Save'"></span>
+                </button>
+                <button class="btn" @click="clear()" :disabled="prefLoading">Use global default</button>
+            </div>
+        </div>
+    </div>
+
     <div class="card mt-2" x-data="pwForm()">
         <div class="card-header">Change Password</div>
         <div class="card-body">
@@ -49,6 +74,48 @@
 </div>
 
 <script>
+function prefsForm() {
+    return {
+        defaultTTL: {{ user.default_ttl if user.default_ttl is not none else global_default_ttl }},
+        prefLoading: false, prefError: null, prefSuccess: false,
+        async save() {
+            this.prefError = null;
+            this.prefSuccess = false;
+            if (!this.defaultTTL || this.defaultTTL < 1) {
+                this.prefError = 'TTL must be at least 1.'; return;
+            }
+            this.prefLoading = true;
+            try {
+                const res = await fetch('/api/users/me/preferences', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ default_ttl: this.defaultTTL }),
+                });
+                if (res.ok) { this.prefSuccess = true; }
+                else { const d = await res.json(); this.prefError = d.detail || 'Failed to save.'; }
+            } catch { this.prefError = 'Network error.'; }
+            finally { this.prefLoading = false; }
+        },
+        async clear() {
+            this.prefError = null;
+            this.prefSuccess = false;
+            this.prefLoading = true;
+            try {
+                const res = await fetch('/api/users/me/preferences', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ default_ttl: null }),
+                });
+                if (res.ok) {
+                    this.defaultTTL = {{ global_default_ttl }};
+                    this.prefSuccess = true;
+                } else { const d = await res.json(); this.prefError = d.detail || 'Failed.'; }
+            } catch { this.prefError = 'Network error.'; }
+            finally { this.prefLoading = false; }
+        }
+    };
+}
+
 function pwForm() {
     return {
         current: '', newpw: '', confirm: '',

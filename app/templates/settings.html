@@ -5,10 +5,30 @@
     <h1>Settings</h1>
 </div>
 
-<div x-data="{ tab: 'servers' }">
+<div x-data="{ tab: 'general' }">
     <div class="tabs">
+        <button class="tab" :class="{ active: tab === 'general' }" @click="tab = 'general'">General</button>
         <button class="tab" :class="{ active: tab === 'servers' }" @click="tab = 'servers'">PowerDNS Servers</button>
         <button class="tab" :class="{ active: tab === 'templates' }" @click="tab = 'templates'">Zone Templates</button>
+    </div>
+
+    <!-- General Tab -->
+    <div x-show="tab === 'general'" x-data="generalSettings()" x-init="init()">
+        <div class="card">
+            <div class="card-header">General</div>
+            <div class="card-body">
+                <div id="general-flash"></div>
+                <div class="form-group" style="max-width:200px;">
+                    <label>Default Record TTL (seconds)</label>
+                    <input type="number" x-model.number="defaultTTL" min="1">
+                    <p style="margin:.4rem 0 0; font-size:.8rem; color:var(--text-dim);">Applied when creating new records. Users can override this in their profile.</p>
+                </div>
+                <button class="btn btn-primary mt-2" @click="save()" :disabled="saving">
+                    <span x-show="!saving">Save</span>
+                    <span x-show="saving">Saving…</span>
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- PowerDNS Servers Tab -->
@@ -188,6 +208,36 @@
 </div>
 
 <script>
+function generalSettings() {
+    return {
+        defaultTTL: {{ default_record_ttl }},
+        saving: false,
+
+        init() {},
+
+        flash(msg, type) {
+            document.getElementById('general-flash').innerHTML = `<div class="flash flash-${type}">${msg}</div>`;
+        },
+
+        async save() {
+            this.saving = true;
+            document.getElementById('general-flash').innerHTML = '';
+            const resp = await fetch('/api/settings/default-record-ttl', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ value: this.defaultTTL }),
+            });
+            this.saving = false;
+            if (resp.ok) {
+                this.flash('Saved.', 'success');
+            } else {
+                const err = await resp.json().catch(() => ({detail: 'Save failed'}));
+                this.flash(err.detail, 'error');
+            }
+        },
+    };
+}
+
 function pdnsServers() {
     return {
         servers: {{ pdns_servers | tojson }},

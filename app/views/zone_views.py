@@ -11,7 +11,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.pdns_client import PDNSError, registry
-from app.repositories import pdns_server_repo, zone_assignment_repo, zone_template_repo
+from app.repositories import pdns_server_repo, zone_assignment_repo, zone_template_repo, settings_repo
 
 router = APIRouter(tags=["zone-views"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -123,6 +123,12 @@ async def zone_detail(
     except (PDNSError, RuntimeError):
         return RedirectResponse(url="/zones", status_code=302)
 
+    if user.default_ttl is not None:
+        default_ttl = user.default_ttl
+    else:
+        raw_ttl = await settings_repo.get_setting(db, "default_record_ttl")
+        default_ttl = int(raw_ttl) if raw_ttl is not None else 60
+
     return templates.TemplateResponse(request, "zones/detail.html", context={
         "user": user,
         "active_page": "zones",
@@ -130,6 +136,7 @@ async def zone_detail(
         "record_types": RECORD_TYPES,
         "server_id": server_id,
         "server_name": srv["name"],
+        "default_ttl": default_ttl,
     })
 
 

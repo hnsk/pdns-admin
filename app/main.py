@@ -10,12 +10,13 @@ from app.config import settings
 from app.database import init_db, close_db
 from app.pdns_client import registry
 from app.repositories.user_repo import ensure_admin_exists
-from app.repositories import pdns_server_repo
+from app.repositories import pdns_server_repo, settings_repo
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db = await init_db()
+    await settings_repo.seed_defaults(db, {"default_record_ttl": "60"})
     await ensure_admin_exists(db, settings.default_admin_password)
     for srv in await pdns_server_repo.list_servers(db):
         if srv["is_active"]:

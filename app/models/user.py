@@ -6,6 +6,7 @@ class User(BaseModel):
     username: str
     role: str  # "admin" or "operator"
     is_active: bool
+    default_ttl: int | None = None
 
 
 class UserCreate(BaseModel):
@@ -18,6 +19,10 @@ class UserUpdate(BaseModel):
     password: str | None = None
     role: str | None = None
     is_active: bool | None = None
+
+
+class UserPreferences(BaseModel):
+    default_ttl: int | None = None
 
 
 class LoginRequest(BaseModel):

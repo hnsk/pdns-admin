@@ -5,19 +5,19 @@ from app.models.user import User
 
 
 async def get_user_by_id(db: aiosqlite.Connection, user_id: int) -> User | None:
-    row = await db.execute_fetchall("SELECT id, username, role, is_active FROM users WHERE id = ?", (user_id,))
+    row = await db.execute_fetchall("SELECT id, username, role, is_active, default_ttl FROM users WHERE id = ?", (user_id,))
     if not row:
         return None
     r = row[0]
-    return User(id=r[0], username=r[1], role=r[2], is_active=bool(r[3]))
+    return User(id=r[0], username=r[1], role=r[2], is_active=bool(r[3]), default_ttl=r[4])
 
 
 async def get_user_by_username(db: aiosqlite.Connection, username: str) -> User | None:
-    row = await db.execute_fetchall("SELECT id, username, role, is_active FROM users WHERE username = ?", (username,))
+    row = await db.execute_fetchall("SELECT id, username, role, is_active, default_ttl FROM users WHERE username = ?", (username,))
     if not row:
         return None
     r = row[0]
-    return User(id=r[0], username=r[1], role=r[2], is_active=bool(r[3]))
+    return User(id=r[0], username=r[1], role=r[2], is_active=bool(r[3]), default_ttl=r[4])
 
 
 async def verify_password(db: aiosqlite.Connection, username: str, password: str) -> User | None:
@@ -65,13 +65,21 @@ async def update_user(
         await db.commit()
 
 
+async def update_user_preferences(db: aiosqlite.Connection, user_id: int, default_ttl: int | None) -> None:
+    await db.execute(
+        "UPDATE users SET default_ttl = ?, updated_at = datetime('now') WHERE id = ?",
+        (default_ttl, user_id),
+    )
+    await db.commit()
+
+
 async def delete_user(db: aiosqlite.Connection, user_id: int) -> None:
     await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     await db.commit()
 
 
 async def list_users(db: aiosqlite.Connection) -> list[User]:
-    rows = await db.execute_fetchall("SELECT id, username, role, is_active FROM users ORDER BY username")
+    rows = await db.execute_fetchall("SELECT id, username, role, is_active, default_ttl FROM users ORDER BY username")
     return [User(id=r[0], username=r[1], role=r[2], is_active=bool(r[3])) for r in rows]
 
 

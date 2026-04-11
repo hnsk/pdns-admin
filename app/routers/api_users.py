@@ -5,7 +5,7 @@ import aiosqlite
 
 from app.auth import require_admin, get_current_user
 from app.database import get_db
-from app.models.user import User, UserCreate, UserUpdate, PasswordChange
+from app.models.user import User, UserCreate, UserUpdate, PasswordChange, UserPreferences
 from app.repositories import user_repo, zone_assignment_repo, audit_repo
 
 
@@ -117,6 +117,18 @@ async def get_user_zones(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     return await zone_assignment_repo.get_user_zone_assignments(db, user_id)
+
+
+@router.put("/me/preferences")
+async def update_own_preferences(
+    body: UserPreferences,
+    user: User = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    if body.default_ttl is not None and body.default_ttl < 1:
+        raise HTTPException(status_code=400, detail="TTL must be at least 1")
+    await user_repo.update_user_preferences(db, user.id, body.default_ttl)
+    return {"ok": True}
 
 
 @router.put("/me/password")

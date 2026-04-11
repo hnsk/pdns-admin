@@ -10,7 +10,7 @@ from app.auth import require_admin, get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.pdns_client import PDNSError, registry
-from app.repositories import pdns_server_repo, user_repo, zone_assignment_repo
+from app.repositories import pdns_server_repo, user_repo, zone_assignment_repo, settings_repo
 
 router = APIRouter(tags=["user-views"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -83,10 +83,17 @@ async def user_detail(
 
 
 @router.get("/profile", response_class=HTMLResponse)
-async def profile_page(request: Request, user: User = Depends(get_current_user)):
+async def profile_page(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    raw_ttl = await settings_repo.get_setting(db, "default_record_ttl")
+    global_default_ttl = int(raw_ttl) if raw_ttl is not None else 60
     return templates.TemplateResponse(request, "profile.html", context={
         "user": user,
         "active_page": "profile",
+        "global_default_ttl": global_default_ttl,
     })
 
 

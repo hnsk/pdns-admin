@@ -6,7 +6,7 @@
     <div>
         <h1 class="mono">{{ zone.name }}</h1>
         <div class="flex gap-2 items-center mt-1">
-            <span class="badge badge-gray">{{ zone.kind }}</span>
+            <span class="badge {% if zone.kind == 'Master' %}badge-blue{% elif zone.kind == 'Slave' %}badge-yellow{% else %}badge-gray{% endif %}">{{ zone.kind }}</span>
             {% if zone.dnssec %}
             <span class="badge badge-green">DNSSEC</span>
             {% endif %}
@@ -50,9 +50,9 @@
     <template x-if="showAdd">
         <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: rgba(59,130,246,0.05);">
             <form @submit.prevent="addRecord()">
-                <div class="flex gap-2" style="flex-wrap: wrap; align-items: flex-start;">
+                <div class="flex gap-2" style="flex-wrap: wrap; align-items: center;">
                     <div style="display:flex; align-items:center; gap:0.3rem; flex:0 0 auto;">
-                        <input type="text" x-model="newRec.name" placeholder="@ or subdomain" style="width: 160px;" required>
+                        <input type="text" x-model="newRec.name" placeholder="subdomain" style="width: 180px;">
                         <span style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">.{{ zone.name }}</span>
                     </div>
                     <select x-model="newRec.type" style="width: 110px;" required>
@@ -60,15 +60,15 @@
                         <option value="{{ rt }}">{{ rt }}</option>
                         {% endfor %}
                     </select>
-                    <input type="number" x-model.number="newRec.ttl" placeholder="TTL" style="width: 80px;" value="3600">
-                    <textarea x-model="newRec.content" placeholder="Record content" style="flex:1; min-width: 200px; resize: vertical; font-family: monospace; font-size: 0.85rem;" rows="2" required></textarea>
-                    <div style="display:flex; flex-direction:column; gap:0.4rem;">
-                        <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem;">
-                            <input type="checkbox" x-model="newRec.disabled"> Disabled
-                        </label>
-                        <button type="submit" class="btn btn-primary btn-sm" :disabled="saving">Save</button>
-                        <button type="button" class="btn btn-sm" @click="showAdd = false">Cancel</button>
-                    </div>
+                    <input type="number" x-model.number="newRec.ttl" placeholder="TTL" style="width: 80px;">
+                    <textarea x-model="newRec.content" placeholder="Record content" style="flex:1; min-width: 200px; resize: vertical; font-family: monospace; font-size: 0.85rem; rows:1;" rows="1" required></textarea>
+                    <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem; white-space:nowrap;">
+                        <input type="checkbox" x-model="newRec.disabled"> Disabled
+                    </label>
+                </div>
+                <div style="display:flex; gap:0.4rem; margin-top:0.5rem; justify-content:flex-end;">
+                    <button type="submit" class="btn btn-primary btn-sm" :disabled="saving">Save</button>
+                    <button type="button" class="btn btn-sm" @click="showAdd = false">Cancel</button>
                 </div>
                 <template x-if="addError"><div class="flash flash-error mt-1" x-text="addError"></div></template>
             </form>
@@ -101,8 +101,14 @@
                 <td class="mono text-sm" x-show="!row.editing" style="word-break: break-all;" x-text="row.content"></td>
                 <td x-show="row.editing"><textarea x-model="row.editContent" style="width:100%; padding:0.2rem 0.4rem; font-size:0.8rem; font-family:monospace; resize:vertical;" rows="2"></textarea></td>
                 <td>
-                    <span x-show="row.disabled" class="badge badge-red">disabled</span>
-                    <span x-show="!row.disabled" class="badge badge-green">active</span>
+                    <template x-if="!row.editing">
+                        <span :class="row.disabled ? 'badge badge-red' : 'badge badge-green'" x-text="row.disabled ? 'disabled' : 'active'"></span>
+                    </template>
+                    <template x-if="row.editing">
+                        <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem; white-space:nowrap;">
+                            <input type="checkbox" x-model="row.editDisabled"> Disabled
+                        </label>
+                    </template>
                 </td>
                 <td>
                     <div class="btn-group">
@@ -266,7 +272,7 @@ function zoneEditor() {
         sortKey: 'name',
         sortAsc: true,
         rows: window._zoneRows,
-        newRec: { name: '', type: 'A', ttl: 3600, content: '', disabled: false },
+        newRec: { name: '', type: 'A', ttl: {{ default_ttl }}, content: '', disabled: false },
 
         get sortedRows() {
             const DNSSEC_TYPES = new Set(['RRSIG', 'DNSKEY']);
