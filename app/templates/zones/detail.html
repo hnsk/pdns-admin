@@ -43,54 +43,6 @@
             </label>
             {% endif %}
         </div>
-        <button class="btn btn-primary btn-sm" @click="showAdd = true">+ Add Record</button>
-    </div>
-
-    <!-- Add Record Form -->
-    <template x-if="showAdd">
-        <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: rgba(59,130,246,0.05);">
-            <form @submit.prevent="addRecord()">
-                <div class="flex gap-2" style="flex-wrap: wrap; align-items: center;">
-                    <div style="display:flex; align-items:center; gap:0.3rem; flex:0 0 auto;">
-                        <input type="text" x-model="newRec.name" placeholder="subdomain" style="width: 180px;">
-                        <span style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">.{{ zone.name }}</span>
-                    </div>
-                    <select x-model="newRec.type" style="width: 110px;" required>
-                        {% for rt in record_types %}
-                        <option value="{{ rt }}">{{ rt }}</option>
-                        {% endfor %}
-                    </select>
-                    <input type="number" x-model.number="newRec.ttl" placeholder="TTL" style="width: 80px;">
-                    <textarea x-model="newRec.content" placeholder="Record content" style="flex:1; min-width: 200px; resize: vertical; font-family: monospace; font-size: 0.85rem; rows:1;" rows="1" required></textarea>
-                    <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem; white-space:nowrap;">
-                        <input type="checkbox" x-model="newRec.disabled"> Disabled
-                    </label>
-                </div>
-                <div style="display:flex; gap:0.4rem; margin-top:0.5rem; justify-content:flex-end;">
-                    <button type="submit" class="btn btn-primary btn-sm" :disabled="saving">Save</button>
-                    <button type="button" class="btn btn-sm" @click="showAdd = false">Cancel</button>
-                </div>
-                <template x-if="addError"><div class="flash flash-error mt-1" x-text="addError"></div></template>
-            </form>
-        </div>
-    </template>
-
-    <!-- Bulk Action Toolbar -->
-    <div x-show="selectedCount > 0" style="padding: 0.5rem 1.25rem; border-bottom: 1px solid var(--border); background: rgba(59,130,246,0.05); display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-        <span x-text="selectedCount + ' selected'" style="font-size:0.85rem; font-weight:500; color:var(--text-dim);"></span>
-        <button @click="bulkDelete()" class="btn btn-danger btn-sm" :disabled="bulkSaving">Delete</button>
-        <button @click="bulkSetDisabled(false)" class="btn btn-sm" :disabled="bulkSaving">Enable</button>
-        <button @click="bulkSetDisabled(true)" class="btn btn-sm" :disabled="bulkSaving">Disable</button>
-        <template x-if="!bulkMixedTypes">
-            <span style="display:flex; align-items:center; gap:0.4rem;">
-                <input type="text" x-model="bulkContent" placeholder="New content..." class="mono" style="width:220px; padding:0.25rem 0.5rem; font-size:0.8rem;">
-                <button @click="bulkSetContent()" class="btn btn-primary btn-sm" :disabled="!bulkContent.trim() || bulkSaving">Apply</button>
-            </span>
-        </template>
-        <template x-if="bulkMixedTypes">
-            <span style="color:var(--text-dim); font-size:.85rem;">Select same type to edit content</span>
-        </template>
-        <button @click="clearSelection()" class="btn btn-sm">Clear</button>
     </div>
 
     <!-- Records Table -->
@@ -144,6 +96,58 @@
         </template>
         </tbody>
     </table>
+
+    <!-- Bulk Action Toolbar -->
+    <div x-show="selectedCount > 0" style="padding: 0.5rem 1.25rem; border-top: 1px solid var(--border); background: rgba(59,130,246,0.05); display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <span x-text="selectedCount + ' selected'" style="font-size:0.85rem; font-weight:500; color:var(--text-dim);"></span>
+        <button @click="bulkDelete()" class="btn btn-danger btn-sm" :disabled="bulkSaving">Delete</button>
+        <button @click="bulkSetDisabled(false)" class="btn btn-sm" :disabled="bulkSaving">Enable</button>
+        <button @click="bulkSetDisabled(true)" class="btn btn-sm" :disabled="bulkSaving">Disable</button>
+        <template x-if="!bulkMixedTypes">
+            <span style="display:flex; align-items:center; gap:0.4rem;">
+                <input type="text" x-model="bulkContent" placeholder="New content..." class="mono" style="width:220px; padding:0.25rem 0.5rem; font-size:0.8rem;">
+                <button @click="bulkSetContent()" class="btn btn-primary btn-sm" :disabled="!bulkContent.trim() || bulkSaving">Apply</button>
+            </span>
+        </template>
+        <template x-if="bulkMixedTypes">
+            <span style="color:var(--text-dim); font-size:.85rem;">Select same type to edit content</span>
+        </template>
+        <button @click="clearSelection()" class="btn btn-sm">Clear</button>
+    </div>
+
+    <!-- Add Record Form -->
+    <template x-if="showAdd">
+        <div style="padding: 1rem 1.25rem; border-top: 1px solid var(--border); background: rgba(59,130,246,0.05);">
+            <form @submit.prevent="addRecord()">
+                <div class="flex gap-2" style="flex-wrap: wrap; align-items: center;">
+                    <div style="display:flex; align-items:center; gap:0.3rem; flex:0 0 auto;">
+                        <input type="text" x-model="newRec.name" placeholder="subdomain" style="width: 180px;">
+                        <span style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">.{{ zone.name }}</span>
+                    </div>
+                    <select x-model="newRec.type" style="width: 110px;" required>
+                        {% for rt in record_types %}
+                        <option value="{{ rt }}">{{ rt }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="number" x-model.number="newRec.ttl" placeholder="TTL" style="width: 80px;">
+                    <textarea x-model="newRec.content" placeholder="Record content" style="flex:1; min-width: 200px; resize: vertical; font-family: monospace; font-size: 0.85rem; rows:1;" rows="1" required></textarea>
+                    <label style="font-size:0.8rem; display:flex; align-items:center; gap:0.3rem; white-space:nowrap;">
+                        <input type="checkbox" x-model="newRec.disabled"> Disabled
+                    </label>
+                </div>
+                <div style="display:flex; gap:0.4rem; margin-top:0.5rem; justify-content:flex-end;">
+                    <button type="submit" class="btn btn-primary btn-sm" :disabled="saving">Save</button>
+                    <button type="button" class="btn btn-sm" @click="showAdd = false">Cancel</button>
+                </div>
+                <template x-if="addError"><div class="flash flash-error mt-1" x-text="addError"></div></template>
+            </form>
+        </div>
+    </template>
+
+    <!-- Add Record Button -->
+    <div style="padding: 0.75rem 1.25rem; border-top: 1px solid var(--border);">
+        <button class="btn btn-primary btn-sm" @click="showAdd = true" x-show="!showAdd">+ Add Record</button>
+    </div>
 </div>
 
 {% if user.role == 'admin' or zone.kind == 'Slave' %}
