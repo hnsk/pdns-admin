@@ -1,5 +1,7 @@
 # PowerAdmin
 
+> **Notice:** This is a personal learning exercise. No maintenance planned. Not suitable for production use.
+
 Lightweight web-based management interface for PowerDNS Authoritative Server.
 
 ## Features
