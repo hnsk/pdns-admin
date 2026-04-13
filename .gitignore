@@ -12,6 +12,8 @@ build/
 
 # Runtime
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 
 # Tools
