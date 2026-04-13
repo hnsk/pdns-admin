@@ -93,6 +93,24 @@ export POWERADMIN_DATABASE_PATH=./poweradmin.db
 uvicorn app.main:app --reload --port 8080
 ```
 
+## Testing
+
+Tests use pytest with async support. No PowerDNS instance needed — PDNS calls are mocked, DB runs in-memory.
+
+```bash
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run all tests
+pytest
+
+# Run specific file
+pytest tests/test_api_zones.py
+
+# Verbose output
+pytest -v
+```
+
 ## Tech Stack
 
 - **Backend**: Python, FastAPI, aiosqlite, httpx
