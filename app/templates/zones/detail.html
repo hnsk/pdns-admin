@@ -16,9 +16,9 @@
     </div>
     <div class="btn-group">
         <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/notify{{ sid_param }}" hx-swap="none"
-            hx-on::after-request="if(event.detail.successful) alert('Notify sent')">Notify</button>
+            hx-on::after-request="if(event.detail.successful) showToast('Notify sent')">Notify</button>
         <button class="btn btn-sm" hx-put="/api/zones/{{ zone.id }}/rectify{{ sid_param }}" hx-swap="none"
-            hx-on::after-request="if(event.detail.successful) alert('Zone rectified')">Rectify</button>
+            hx-on::after-request="if(event.detail.successful) showToast('Zone rectified')">Rectify</button>
         <a href="/zones/{{ zone.id }}/export{{ sid_param }}" class="btn btn-sm">Export</a>
         {% if user.role == 'admin' %}
         <a href="/zones/{{ zone.id }}/dnssec{{ sid_param }}" class="btn btn-sm">DNSSEC Keys</a>
