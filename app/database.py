@@ -22,7 +22,7 @@ async def init_db() -> aiosqlite.Connection:
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.execute("PRAGMA foreign_keys=ON")
-    await _run_migrations(_db)
+    await run_migrations(_db)
     return _db
 
 
@@ -33,7 +33,7 @@ async def close_db() -> None:
         _db = None
 
 
-async def _run_migrations(db: aiosqlite.Connection) -> None:
+async def run_migrations(db: aiosqlite.Connection) -> None:
     await db.execute(
         "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))"
     )
