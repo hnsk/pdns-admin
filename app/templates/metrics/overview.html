@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Metrics — PowerAdmin{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Server Metrics</h1>
+    <span class="text-dim text-sm" x-data="metricsOverview()" x-init="init()" x-show="lastUpdated" x-text="'Updated ' + lastUpdated"></span>
+</div>
+
+<div x-data="metricsOverview()" x-init="init()">
+    <template x-if="error">
+        <div class="flash flash-error" x-text="error"></div>
+    </template>
+
+    <template x-if="servers.length === 0 && !loading && !error">
+        <div class="empty-state">No active servers configured.</div>
+    </template>
+
+    <div class="grid-3" style="align-items:start;">
+        <template x-for="srv in servers" :key="srv.id">
+            <div class="card">
+                <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span x-text="srv.name"></span>
+                    <span class="badge" :class="srv.connected ? 'badge-green' : 'badge-red'"
+                          x-text="srv.connected ? 'Up' : 'Down'"></span>
+                </div>
+                <div class="card-body">
+                    <template x-if="srv.connected">
+                        <div>
+                            <div class="flex justify-between mb-2">
+                                <span class="text-dim text-sm">Version</span>
+                                <span class="mono text-sm" x-text="srv.version || '—'"></span>
+                            </div>
+                            <div class="flex justify-between mb-2">
+                                <span class="text-dim text-sm">Zones</span>
+                                <span x-text="srv.zone_count"></span>
+                            </div>
+                            <div class="flex justify-between mb-2">
+                                <span class="text-dim text-sm">DNSSEC</span>
+                                <span x-text="srv.dnssec_count"></span>
+                            </div>
+                            <div style="margin-top:1rem;">
+                                <a :href="'/metrics/' + srv.id" class="btn btn-primary btn-sm" style="width:100%; justify-content:center;">
+                                    View Details
+                                </a>
+                            </div>
+                        </div>
+                    </template>
+                    <template x-if="!srv.connected">
+                        <div class="text-dim text-sm" style="text-align:center; padding:1rem 0;">
+                            Disconnected
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+
+        <!-- Loading skeletons -->
+        <template x-if="loading && servers.length === 0">
+            {% for srv in servers %}
+            <div class="card">
+                <div class="card-header">{{ srv.name }}</div>
+                <div class="card-body">
+                    <div class="text-dim text-sm" style="text-align:center; padding:1rem 0;">Loading…</div>
+                </div>
+            </div>
+            {% endfor %}
+        </template>
+    </div>
+</div>
+
+<script>
+function metricsOverview() {
+    return {
+        servers: [],
+        loading: true,
+        error: null,
+        lastUpdated: null,
+        _interval: null,
+
+        async init() {
+            await this.fetch();
+            this._interval = setInterval(() => this.fetch(), 10000);
+        },
+
+        async fetch() {
+            try {
+                const res = await fetch('/api/metrics');
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    this.error = d.detail || 'Failed to load metrics';
+                    return;
+                }
+                this.servers = await res.json();
+                this.error = null;
+                this.lastUpdated = new Date().toLocaleTimeString();
+            } catch (e) {
+                this.error = 'Network error: ' + e.message;
+            } finally {
+                this.loading = false;
+            }
+        },
+    };
+}
+</script>
+{% endblock %}

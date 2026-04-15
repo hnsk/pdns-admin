@@ -1,0 +1,419 @@
+{% extends "base.html" %}
+{% block title %}{{ server.name }} Metrics — PowerAdmin{% endblock %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+
+<div x-data="metricsDetail({{ server.id }})" x-init="init()">
+
+<div class="page-header">
+    <div>
+        <div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.25rem;">
+            <a href="/metrics">Metrics</a> /
+        </div>
+        <h1>{{ server.name }}</h1>
+    </div>
+    <div style="text-align:right;">
+        <span class="badge" :class="connected ? 'badge-green' : 'badge-red'" x-text="connected ? 'Live' : 'Disconnected'"></span>
+        <div class="text-dim text-sm mt-1" x-show="lastUpdated" x-text="'Updated ' + lastUpdated"></div>
+    </div>
+</div>
+
+    <template x-if="error">
+        <div class="flash flash-error" x-text="error"></div>
+    </template>
+
+    <!-- Header stats -->
+    <div class="grid-4 mb-2">
+        <div class="card">
+            <div class="card-body" style="text-align:center;">
+                <div class="text-dim text-sm mb-2">Version</div>
+                <div class="mono" x-text="info.version || '—'"></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-body" style="text-align:center;">
+                <div class="text-dim text-sm mb-2">Uptime</div>
+                <div x-text="formatUptime(stat('uptime'))"></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-body" style="text-align:center;">
+                <div class="text-dim text-sm mb-2">Latency</div>
+                <div><span x-text="stat('latency')"></span> <span class="text-dim text-sm">ms</span></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-body" style="text-align:center;">
+                <div class="text-dim text-sm mb-2">Backend Queries</div>
+                <div x-text="fmtNum(stat('backend-queries'))"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Query + Cache + Errors row -->
+    <div class="grid-3 mb-2">
+        <!-- Query stats -->
+        <div class="card">
+            <div class="card-header">Queries</div>
+            <div class="card-body">
+                <div style="position:relative; height:110px; margin-bottom:1rem;">
+                    <canvas id="chart-queries"></canvas>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">UDP queries</span>
+                    <div style="text-align:right;">
+                        <div x-text="fmtNum(stat('udp-queries'))"></div>
+                        <div class="text-dim text-sm" x-show="delta('udp-queries') !== null" x-text="'+' + fmtNum(delta('udp-queries')) + '/s'"></div>
+                    </div>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">TCP queries</span>
+                    <div style="text-align:right;">
+                        <div x-text="fmtNum(stat('tcp-queries'))"></div>
+                        <div class="text-dim text-sm" x-show="delta('tcp-queries') !== null" x-text="'+' + fmtNum(delta('tcp-queries')) + '/s'"></div>
+                    </div>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">Recursing questions</span>
+                    <div x-text="fmtNum(stat('recursing-questions'))"></div>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-dim text-sm">Recursing answers</span>
+                    <div x-text="fmtNum(stat('recursing-answers'))"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cache stats -->
+        <div class="card">
+            <div class="card-header">Query Cache</div>
+            <div class="card-body">
+                <div style="position:relative; height:110px; margin-bottom:1rem;">
+                    <canvas id="chart-cache"></canvas>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">Hits</span>
+                    <div x-text="fmtNum(stat('query-cache-hit'))"></div>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">Misses</span>
+                    <div x-text="fmtNum(stat('query-cache-miss'))"></div>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-dim text-sm">Hit ratio</span>
+                    <div x-text="cacheHitRatio()"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error stats -->
+        <div class="card">
+            <div class="card-header">Errors</div>
+            <div class="card-body">
+                <div style="position:relative; height:110px; margin-bottom:1rem;">
+                    <canvas id="chart-errors"></canvas>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">SERVFAIL packets</span>
+                    <div :style="Number(stat('servfail-packets')) > 0 ? 'color:var(--danger)' : ''"
+                         x-text="fmtNum(stat('servfail-packets'))"></div>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-dim text-sm">NXDOMAIN packets</span>
+                    <div x-text="fmtNum(stat('nxdomain-packets'))"></div>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-dim text-sm">Corrupt packets</span>
+                    <div :style="Number(stat('corrupt-packets')) > 0 ? 'color:var(--warning)' : ''"
+                         x-text="fmtNum(stat('corrupt-packets'))"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full stats table -->
+    <div class="card">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>All Statistics</span>
+            <input type="text" x-model="search" placeholder="Filter…" style="width:14rem; padding:0.3rem 0.6rem; font-size:0.85rem;" />
+        </div>
+        <div style="overflow-x:auto; max-height:500px; overflow-y:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th style="text-align:right;">Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="row in filteredStats()" :key="row.name">
+                        <tr>
+                            <td class="mono text-sm" x-text="row.name"></td>
+                            <td class="text-dim text-sm" x-text="row.type"></td>
+                            <td class="mono text-sm" style="text-align:right; white-space:pre-wrap; word-break:break-word;" x-text="fmtValue(row)"></td>
+                        </tr>
+                    </template>
+                    <template x-if="filteredStats().length === 0">
+                        <tr><td colspan="3" class="empty-state">No matching statistics</td></tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function metricsDetail(serverId) {
+    // Keep Chart.js instances outside Alpine's reactive proxy to prevent
+    // chart.update() being called with a Proxy as `this`, which breaks
+    // Chart.js internal state access.
+    const _charts = { queries: null, cache: null, errors: null };
+
+    return {
+        info: {},
+        statistics: [],
+        prevStats: null,
+        prevTime: null,
+        connected: false,
+        loading: true,
+        error: null,
+        lastUpdated: null,
+        search: '',
+        _ws: null,
+        _reconnectTimer: null,
+
+        // Rolling history (60 points × 2s = 2 min)
+        MAX_POINTS: 60,
+        history: {
+            labels: [],
+            udpRate: [], tcpRate: [],
+            hitRatio: [],
+            servfailRate: [], nxdomainRate: [],
+        },
+
+        init() {
+            this._connect();
+            setTimeout(() => this._initCharts(), 50);
+            window.addEventListener('beforeunload', () => this._close());
+        },
+
+        _connect() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const url = `${proto}://${location.host}/api/metrics/ws/${serverId}`;
+            const ws = new WebSocket(url);
+            this._ws = ws;
+
+            ws.onmessage = (ev) => {
+                const data = JSON.parse(ev.data);
+                if (data.error) {
+                    this.error = data.error;
+                    this.connected = false;
+                    return;
+                }
+                if (this.statistics.length > 0) {
+                    this.prevStats = {};
+                    for (const s of this.statistics) {
+                        this.prevStats[s.name] = s.value;
+                    }
+                    this.prevTime = Date.now();
+                }
+                this.info = data.server_info || {};
+                this.statistics = data.statistics || [];
+                this.connected = true;
+                this.error = null;
+                this.lastUpdated = new Date().toLocaleTimeString();
+                this.loading = false;
+                this._pushHistory();
+                this._updateCharts();
+            };
+
+            ws.onclose = (ev) => {
+                this.connected = false;
+                this.loading = false;
+                if (ev.code === 4401) { this.error = 'Not authorized'; return; }
+                if (ev.code === 4404) { this.error = 'Server not found'; return; }
+                if (ev.code === 4503) { this.error = 'Server not connected'; return; }
+                this._reconnectTimer = setTimeout(() => this._connect(), 3000);
+            };
+
+            ws.onerror = () => {
+                this.connected = false;
+                this.error = 'WebSocket error';
+            };
+        },
+
+        _close() {
+            clearTimeout(this._reconnectTimer);
+            if (this._ws) {
+                this._ws.onclose = null;
+                this._ws.close();
+            }
+        },
+
+        _pushHistory() {
+            const h = this.history;
+            const ts = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            h.labels.push(ts);
+            h.udpRate.push(this.delta('udp-queries') ?? 0);
+            h.tcpRate.push(this.delta('tcp-queries') ?? 0);
+
+            const hits = Number(this.stat('query-cache-hit'));
+            const misses = Number(this.stat('query-cache-miss'));
+            const total = hits + misses;
+            h.hitRatio.push(total > 0 ? parseFloat(((hits / total) * 100).toFixed(1)) : null);
+
+            h.servfailRate.push(this.delta('servfail-packets') ?? 0);
+            h.nxdomainRate.push(this.delta('nxdomain-packets') ?? 0);
+
+            if (h.labels.length > this.MAX_POINTS) {
+                h.labels.shift();
+                h.udpRate.shift(); h.tcpRate.shift();
+                h.hitRatio.shift();
+                h.servfailRate.shift(); h.nxdomainRate.shift();
+            }
+        },
+
+        _initCharts() {
+            const gridColor = 'rgba(255,255,255,0.05)';
+            const tickStyle = { color: '#94a3b8', font: { size: 10 } };
+
+            const baseOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 10, padding: 8 },
+                    },
+                    tooltip: { bodyFont: { size: 11 }, titleFont: { size: 10 } },
+                },
+                scales: {
+                    x: { display: false },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        grid: { color: gridColor },
+                        ticks: tickStyle,
+                        border: { color: 'transparent' },
+                    },
+                },
+                elements: {
+                    point: { radius: 0, hoverRadius: 3 },
+                    line: { tension: 0.3, borderWidth: 1.5 },
+                },
+            };
+
+            const make = (id, datasets, yOverride) => {
+                const el = document.getElementById(id);
+                if (!el) return null;
+                const opts = JSON.parse(JSON.stringify(baseOptions));
+                if (yOverride) Object.assign(opts.scales.y, yOverride);
+                return new Chart(el, {
+                    type: 'line',
+                    data: { labels: [], datasets },
+                    options: opts,
+                });
+            };
+
+            _charts.queries = make('chart-queries', [
+                { label: 'UDP/s', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', fill: true },
+                { label: 'TCP/s', data: [], borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.08)', fill: true },
+            ]);
+
+            _charts.cache = make('chart-cache', [
+                { label: 'Hit %', data: [], borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', fill: true, spanGaps: true },
+            ], {
+                min: 0, max: 100,
+                ticks: { callback: v => v + '%', color: '#94a3b8', font: { size: 10 } },
+            });
+            if (_charts.cache) {
+                _charts.cache.options.plugins.legend.display = false;
+            }
+
+            _charts.errors = make('chart-errors', [
+                { label: 'SERVFAIL/s', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true },
+                { label: 'NXDOMAIN/s', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', fill: true },
+            ]);
+        },
+
+        _updateCharts() {
+            const h = this.history;
+            const upd = (chart, ...arrs) => {
+                if (!chart) return;
+                chart.data.labels = [...h.labels];
+                arrs.forEach((arr, i) => { chart.data.datasets[i].data = [...arr]; });
+                chart.update('none');
+            };
+            upd(_charts.queries, h.udpRate, h.tcpRate);
+            upd(_charts.cache, h.hitRatio);
+            upd(_charts.errors, h.servfailRate, h.nxdomainRate);
+        },
+
+        stat(name) {
+            const s = this.statistics.find(x => x.name === name);
+            return s ? s.value : '—';
+        },
+
+        delta(name) {
+            if (!this.prevStats || this.prevTime === null) return null;
+            const cur = Number(this.stat(name));
+            const prev = Number(this.prevStats[name] ?? cur);
+            if (isNaN(cur) || isNaN(prev)) return null;
+            const elapsed = (Date.now() - this.prevTime) / 1000;
+            if (elapsed <= 0) return null;
+            return Math.max(0, Math.round((cur - prev) / elapsed));
+        },
+
+        cacheHitRatio() {
+            const hits = Number(this.stat('query-cache-hit'));
+            const misses = Number(this.stat('query-cache-miss'));
+            if (isNaN(hits) || isNaN(misses)) return '—';
+            const total = hits + misses;
+            if (total === 0) return '—';
+            return ((hits / total) * 100).toFixed(1) + '%';
+        },
+
+        formatUptime(val) {
+            const secs = Number(val);
+            if (isNaN(secs) || val === '—') return '—';
+            const d = Math.floor(secs / 86400);
+            const h = Math.floor((secs % 86400) / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = secs % 60;
+            if (d > 0) return `${d}d ${h}h ${m}m`;
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        },
+
+        fmtNum(val) {
+            if (val === '—' || val === null || val === undefined) return '—';
+            const n = Number(val);
+            if (isNaN(n)) return String(val);
+            return n.toLocaleString();
+        },
+
+        fmtValue(row) {
+            const v = row.value;
+            if (Array.isArray(v)) {
+                if (v.length === 0) return '—';
+                return v.map(e => `${e.name}: ${e.value}`).join('\n');
+            }
+            return this.fmtNum(v);
+        },
+
+        filteredStats() {
+            const q = this.search.toLowerCase();
+            if (!q) return this.statistics;
+            return this.statistics.filter(s =>
+                s.name.toLowerCase().includes(q) ||
+                this.fmtValue(s).toLowerCase().includes(q)
+            );
+        },
+    };
+}
+</script>
+{% endblock %}

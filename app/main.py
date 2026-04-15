@@ -41,7 +41,7 @@ static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # API routers
-from app.routers import api_auth, api_zones, api_dnssec, api_users, api_audit, api_settings, api_zone_templates, api_pdns_servers, api_tools  # noqa: E402
+from app.routers import api_auth, api_zones, api_dnssec, api_users, api_audit, api_settings, api_zone_templates, api_pdns_servers, api_tools, api_metrics  # noqa: E402
 
 app.include_router(api_auth.router)
 app.include_router(api_zones.router)
@@ -52,9 +52,10 @@ app.include_router(api_settings.router)
 app.include_router(api_zone_templates.router)
 app.include_router(api_pdns_servers.router)
 app.include_router(api_tools.router)
+app.include_router(api_metrics.router)
 
 # View routers
-from app.views import auth_views, zone_views, user_views, dashboard_views, settings_views, tools_views  # noqa: E402
+from app.views import auth_views, zone_views, user_views, dashboard_views, settings_views, tools_views, metrics_views  # noqa: E402
 
 app.include_router(auth_views.router)
 app.include_router(zone_views.router)
@@ -62,3 +63,4 @@ app.include_router(user_views.router)
 app.include_router(dashboard_views.router)
 app.include_router(settings_views.router)
 app.include_router(tools_views.router)
+app.include_router(metrics_views.router)
