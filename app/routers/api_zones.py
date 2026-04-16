@@ -1,4 +1,7 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
 import aiosqlite
 
@@ -11,6 +14,7 @@ from app.pdns_client import PDNSClient, PDNSError, registry
 from app.repositories import audit_repo, pdns_server_repo, zone_assignment_repo, zone_template_repo
 
 router = APIRouter(prefix="/api/zones", tags=["zones"])
+logger = logging.getLogger(__name__)
 
 _QUOTED_TYPES = {"TXT", "SPF"}
 
@@ -44,8 +48,8 @@ async def list_zones(
                     z["_server_id"] = srv["id"]
                     z["_server_name"] = srv["name"]
                     seen[name] = z
-        except (PDNSError, RuntimeError):
-            pass
+        except (PDNSError, RuntimeError) as e:
+            logger.warning("Failed to list zones from server %s: %s", srv["name"], e)
     all_zones = list(seen.values())
 
     if user.role == "admin":
@@ -273,7 +277,6 @@ async def export_zone(
         text = await pdns_client.export_zone(zone_id)
     except PDNSError as e:
         _handle_pdns_error(e)
-    from fastapi.responses import PlainTextResponse
     return PlainTextResponse(text)
 
 

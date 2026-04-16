@@ -59,6 +59,28 @@ async def _do_lookup(name: str, rtype: str, host: str) -> list[dict]:
     ]
 
 
+async def _run_axfr(zone_id: str, server_id: int | None, server_name: str, host: str) -> dict:
+    try:
+        result = await _do_axfr(zone_id, host)
+        return {"server_id": server_id, "server_name": server_name, "text": result["text"], "records": result["records"], "error": None}
+    except Exception as e:
+        return {"server_id": server_id, "server_name": server_name, "text": None, "records": [], "error": str(e)}
+
+
+async def _run_lookup(name: str, rtype: str, server_id: int | None, server_name: str, host: str) -> dict:
+    try:
+        answers = await _do_lookup(name, rtype, host)
+        return {"server_id": server_id, "server_name": server_name, "answers": answers, "error": None}
+    except dns.resolver.NXDOMAIN:
+        return {"server_id": server_id, "server_name": server_name, "answers": [], "error": "NXDOMAIN"}
+    except dns.resolver.NoAnswer:
+        return {"server_id": server_id, "server_name": server_name, "answers": [], "error": "No answer"}
+    except dns.exception.Timeout:
+        return {"server_id": server_id, "server_name": server_name, "answers": [], "error": "Timeout"}
+    except Exception as e:
+        return {"server_id": server_id, "server_name": server_name, "answers": [], "error": str(e)}
+
+
 class AXFRRequest(BaseModel):
     zone_id: str
     server_ids: list[int] = []
@@ -92,24 +114,8 @@ async def axfr_endpoint(
         if body.zone_id not in allowed:
             raise HTTPException(status_code=403, detail="No access to this zone")
 
-    async def _run(srv):
-        host = _host_from_server(srv)
-        try:
-            result = await _do_axfr(body.zone_id, host)
-            return {"server_id": srv["id"], "server_name": srv["name"], "text": result["text"], "records": result["records"], "error": None}
-        except Exception as e:
-            return {"server_id": srv["id"], "server_name": srv["name"], "text": None, "records": [], "error": str(e)}
-
-    async def _run_custom_axfr(host: str):
-        try:
-            result = await _do_axfr(body.zone_id, host)
-            return {"server_id": None, "server_name": host, "text": result["text"], "records": result["records"], "error": None}
-        except Exception as e:
-            return {"server_id": None, "server_name": host, "text": None, "records": [], "error": str(e)}
-
-    tasks = [_run(s) for s in servers]
-    for h in custom_hosts:
-        tasks.append(_run_custom_axfr(h))
+    tasks = [_run_axfr(body.zone_id, srv["id"], srv["name"], _host_from_server(srv)) for srv in servers]
+    tasks += [_run_axfr(body.zone_id, None, h, h) for h in custom_hosts]
     results = await asyncio.gather(*tasks)
 
     accept = request.headers.get("accept", "")
@@ -137,36 +143,8 @@ async def lookup_endpoint(
     if not servers and not custom_hosts:
         raise HTTPException(status_code=400, detail="No valid active servers selected")
 
-    async def _run(srv):
-        host = _host_from_server(srv)
-        try:
-            answers = await _do_lookup(body.name, body.rtype, host)
-            return {"server_id": srv["id"], "server_name": srv["name"], "answers": answers, "error": None}
-        except dns.resolver.NXDOMAIN:
-            return {"server_id": srv["id"], "server_name": srv["name"], "answers": [], "error": "NXDOMAIN"}
-        except dns.resolver.NoAnswer:
-            return {"server_id": srv["id"], "server_name": srv["name"], "answers": [], "error": "No answer"}
-        except dns.exception.Timeout:
-            return {"server_id": srv["id"], "server_name": srv["name"], "answers": [], "error": "Timeout"}
-        except Exception as e:
-            return {"server_id": srv["id"], "server_name": srv["name"], "answers": [], "error": str(e)}
-
-    async def _run_custom_lookup(host: str):
-        try:
-            answers = await _do_lookup(body.name, body.rtype, host)
-            return {"server_id": None, "server_name": host, "answers": answers, "error": None}
-        except dns.resolver.NXDOMAIN:
-            return {"server_id": None, "server_name": host, "answers": [], "error": "NXDOMAIN"}
-        except dns.resolver.NoAnswer:
-            return {"server_id": None, "server_name": host, "answers": [], "error": "No answer"}
-        except dns.exception.Timeout:
-            return {"server_id": None, "server_name": host, "answers": [], "error": "Timeout"}
-        except Exception as e:
-            return {"server_id": None, "server_name": host, "answers": [], "error": str(e)}
-
-    tasks = [_run(s) for s in servers]
-    for h in custom_hosts:
-        tasks.append(_run_custom_lookup(h))
+    tasks = [_run_lookup(body.name, body.rtype, srv["id"], srv["name"], _host_from_server(srv)) for srv in servers]
+    tasks += [_run_lookup(body.name, body.rtype, None, h, h) for h in custom_hosts]
     results = await asyncio.gather(*tasks)
 
     accept = request.headers.get("accept", "")

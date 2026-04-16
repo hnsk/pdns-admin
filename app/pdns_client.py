@@ -121,7 +121,7 @@ class PDNSClient:
             data = resp.json()
             if isinstance(data, dict) and "zone" in data:
                 return data["zone"]
-        except Exception:
+        except (ValueError, KeyError):
             pass
         return resp.text
 

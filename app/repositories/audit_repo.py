@@ -5,6 +5,20 @@ import aiosqlite
 from app.models.audit import AuditEntry
 
 
+def _build_audit_where(
+    zone_name: str | None, user_id: int | None
+) -> tuple[str, list]:
+    conditions, params = [], []
+    if zone_name:
+        conditions.append("zone_name = ?")
+        params.append(zone_name)
+    if user_id:
+        conditions.append("user_id = ?")
+        params.append(user_id)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params
+
+
 async def log_action(
     db: aiosqlite.Connection,
     user_id: int | None,
@@ -28,16 +42,7 @@ async def get_audit_log(
     limit: int = 100,
     offset: int = 0,
 ) -> list[AuditEntry]:
-    conditions = []
-    params: list = []
-    if zone_name:
-        conditions.append("zone_name = ?")
-        params.append(zone_name)
-    if user_id:
-        conditions.append("user_id = ?")
-        params.append(user_id)
-
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    where, params = _build_audit_where(zone_name, user_id)
     params.extend([limit, offset])
 
     rows = await db.execute_fetchall(
@@ -55,15 +60,6 @@ async def count_audit_log(
     zone_name: str | None = None,
     user_id: int | None = None,
 ) -> int:
-    conditions = []
-    params: list = []
-    if zone_name:
-        conditions.append("zone_name = ?")
-        params.append(zone_name)
-    if user_id:
-        conditions.append("user_id = ?")
-        params.append(user_id)
-
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    where, params = _build_audit_where(zone_name, user_id)
     rows = await db.execute_fetchall(f"SELECT COUNT(*) FROM audit_log {where}", params)
-    return rows[0][0]
+    return rows[0][0] if rows else 0

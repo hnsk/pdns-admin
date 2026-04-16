@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import aiosqlite
@@ -27,11 +27,13 @@ async def login(body: LoginRequest, db: aiosqlite.Connection = Depends(get_db)):
 
 @router.post("/logout")
 async def logout(
+    request: Request,
     user: User = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    from fastapi import Request
-    # Session cleanup handled by cookie removal
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        await delete_session(db, session_id)
     await audit_repo.log_action(db, user.id, user.username, "auth.logout")
     response = JSONResponse({"ok": True})
     response.delete_cookie("session_id")

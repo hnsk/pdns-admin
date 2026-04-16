@@ -23,10 +23,6 @@ class ZoneTemplateCreate(BaseModel):
     is_default: bool = False
 
 
-class ZoneTemplateUpdate(ZoneTemplateCreate):
-    pass
-
-
 @router.get("")
 async def list_templates(
     user: User = Depends(require_admin),
@@ -67,7 +63,7 @@ async def create_template(
 @router.put("/{template_id}")
 async def update_template(
     template_id: int,
-    body: ZoneTemplateUpdate,
+    body: ZoneTemplateCreate,
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):

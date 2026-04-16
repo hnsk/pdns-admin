@@ -1,6 +1,8 @@
+import logging
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 import aiosqlite
 
@@ -19,6 +21,13 @@ class PDNSServerCreate(BaseModel):
     api_key: str
     server_id: str
 
+    @field_validator("api_url")
+    @classmethod
+    def validate_api_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("api_url must start with http:// or https://")
+        return v
+
 
 class PDNSServerUpdate(BaseModel):
     name: str
@@ -26,6 +35,13 @@ class PDNSServerUpdate(BaseModel):
     api_key: str
     server_id: str
     is_active: bool = True
+
+    @field_validator("api_url")
+    @classmethod
+    def validate_api_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("api_url must start with http:// or https://")
+        return v
 
 
 def _strip_key(srv: dict) -> dict:
@@ -47,15 +63,13 @@ async def create_server(
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    if not body.api_url.startswith(("http://", "https://")):
-        raise HTTPException(400, "api_url must start with http:// or https://")
     srv = await pdns_server_repo.create_server(
         db, body.name, body.api_url, body.api_key, body.server_id
     )
     try:
         await registry.start_server(srv["id"], srv["api_url"], srv["api_key"], srv["server_id"])
     except Exception as exc:
-        import logging
+
         logging.warning("Failed to connect to %s: %s", srv["name"], exc)
     await audit_repo.log_action(
         db, user.id, user.username, "pdns_server.create",
@@ -83,9 +97,6 @@ async def update_server(
     user: User = Depends(require_admin),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    if not body.api_url.startswith(("http://", "https://")):
-        raise HTTPException(400, "api_url must start with http:// or https://")
-
     existing = await pdns_server_repo.get_server(db, server_id)
     if existing is None:
         raise HTTPException(404, "Server not found")
@@ -101,7 +112,7 @@ async def update_server(
                 server_id, srv["api_url"], srv["api_key"], srv["server_id"]
             )
         except Exception as exc:
-            import logging
+    
             logging.warning("Failed to reconfigure %s: %s", srv["name"], exc)
     else:
         await registry.stop_server(server_id)

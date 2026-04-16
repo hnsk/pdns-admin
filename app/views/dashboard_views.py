@@ -6,7 +6,7 @@ from fastapi.templating import Jinja2Templates
 
 import aiosqlite
 
-from app.auth import get_current_user
+from app.auth import get_session_user
 from app.database import get_db
 from app.models.user import User
 from app.pdns_client import PDNSError, registry
@@ -23,7 +23,6 @@ async def dashboard(request: Request, db: aiosqlite.Connection = Depends(get_db)
     if not session_id:
         return RedirectResponse(url="/login", status_code=302)
 
-    from app.auth import get_session_user
     user = await get_session_user(db, session_id)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
